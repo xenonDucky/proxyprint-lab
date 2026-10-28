@@ -25,7 +25,8 @@ import {
   computeSlidingWindowStd11x11,
   computeFftHighFrequencyFactor,
   buildPrinter3DLut,
-  sample3DLut
+  sample3DLut,
+  optimizePrintAdjustments
 } from './colorScience';
 
 // ============================================================================
@@ -1158,6 +1159,10 @@ export function runFullPrintPipeline({
       has3mmBleed,
       aspectDiffPct: aspectDiffPct.toFixed(1)
     },
+    anW: AN_W,
+    anH: AN_H,
+    rawAnalysisPixels: rawPixels,
+    resolutionScore,
     printer3DLut,
     baseline: baselineResult,
     current: currentResult
@@ -1517,42 +1522,27 @@ export default function App() {
 
   const handleAutoOptimize = () => {
     if (!analysis) return;
-    const baseMetrics = analysis.baseline.metrics;
-    const darkPct = parseFloat(baseMetrics.pctUnder20);
-    const highDeltaPct = parseFloat(baseMetrics.pctHighDeltaE);
 
-    let recommendedLift = 0;
-    let recommendedGamma = 1.0;
-    let recommendedContrast = 0;
-    let recommendedSat = 0;
-
-    if (darkPct > 18 || analysis.baseline.scores.shadow < 78) {
-      recommendedLift = printerProfile.recommendedToeLift;
-      recommendedGamma = printerProfileId === 'home_matte' ? 1.16 : 1.10;
-      recommendedContrast = 8;
-    } else {
-      recommendedLift = Math.round(printerProfile.recommendedToeLift * 0.35);
-      recommendedGamma = 1.04;
-      recommendedContrast = 4;
+    // If missing required 3mm MPC bleed, enable bleed padding automatically
+    const nextPadBleed = cardStandard.requiresBleed && !analysis.geometry.has3mmBleed ? true : padMpcBleed;
+    if (nextPadBleed !== padMpcBleed) {
+      setPadMpcBleed(nextPadBleed);
     }
 
-    if (highDeltaPct > 22) {
-      recommendedSat = -8;
-    } else if (printerProfileId === 'home_matte') {
-      recommendedSat = 10;
-    }
-
-    setAdjustments({
-      shadowLift: recommendedLift,
-      gamma: recommendedGamma,
-      brightness: 0,
-      contrast: recommendedContrast,
-      saturation: recommendedSat
+    // Run Coarse-to-Fine Coordinate Pattern Search with Tikhonov Regularization
+    const optimalParams = optimizePrintAdjustments({
+      rawPixels: analysis.rawAnalysisPixels,
+      anW: analysis.anW,
+      anH: analysis.anH,
+      has3mmBleed: analysis.geometry.has3mmBleed || nextPadBleed,
+      inputMode,
+      printerProfile,
+      printer3DLut: analysis.printer3DLut,
+      resolutionScore: analysis.resolutionScore,
+      applyUserAdjustmentsFn: applyUserAdjustments
     });
 
-    if (cardStandard.requiresBleed && !analysis.geometry.has3mmBleed) {
-      setPadMpcBleed(true);
-    }
+    setAdjustments(optimalParams);
   };
 
   const handleExportPng = () => {

@@ -305,6 +305,130 @@ def evaluate_color_and_tones(
     }
 
 
+def optimize_adjustments_coordinate_search(
+    work_rgb: np.ndarray,
+    has_3mm_bleed: bool,
+    input_mode: str,
+    printer_profile: Dict[str, Any],
+    resolution_score: int,
+) -> Dict[str, float]:
+    """
+    Coarse-to-Fine Coordinate Pattern Search (Hooke-Jeeves) with Tikhonov Regularization.
+    Evaluates on a stride-4 subsampled 60x82 grid to find the 5D adjustment vector
+    θ = (shadowLift, gamma, brightness, contrast, saturation) that maximizes
+    Q_final + 0.35 * Q_weighted - λ ||θ - θ_0||^2.
+    """
+    sub_rgb = work_rgb[1::4, 1::4]
+    L_sub, _, _ = srgb_to_lab(sub_rgb)
+    p10_l = float(np.percentile(L_sub, 10))
+    p25_l = float(np.percentile(L_sub, 25))
+    p90_l = float(np.percentile(L_sub, 90))
+
+    def clamp_params(p: Dict[str, float]) -> Dict[str, float]:
+        return {
+            "shadowLift": float(np.clip(round(p["shadowLift"]), 0, 75)),
+            "gamma": float(np.clip(round(p["gamma"], 2), 0.82, 1.38)),
+            "brightness": float(np.clip(round(p["brightness"]), -18, 18)),
+            "contrast": float(np.clip(round(p["contrast"]), -20, 32)),
+            "saturation": float(np.clip(round(p["saturation"]), -28, 25)),
+        }
+
+    def eval_obj(adj: Dict[str, float]) -> float:
+        res = evaluate_color_and_tones(
+            work_rgb=sub_rgb,
+            has_3mm_bleed=has_3mm_bleed,
+            input_mode=input_mode,
+            printer_profile=printer_profile,
+            resolution_score=resolution_score,
+            adj=adj,
+            build_visual_buffers=False,
+        )
+        sc = res["scores"]
+        reg = (
+            0.0012 * (adj["shadowLift"] ** 2)
+            + 8.5 * ((adj["gamma"] - 1.0) ** 2)
+            + 0.0035 * (adj["contrast"] ** 2)
+            + 0.012 * (adj["brightness"] ** 2)
+            + 0.003 * (adj["saturation"] ** 2)
+        )
+        return (
+            sc["overall"]
+            + 0.35 * sc["weightedRaw"]
+            + 0.15 * sc["shadow"]
+            + 0.10 * sc["contrast"]
+            + 0.10 * sc["color"]
+            - reg
+        )
+
+    adaptive_lift = max(
+        0.0, min(68.0, round((float(printer_profile["black_floor_l"]) + 8.0 - p10_l) * 2.8))
+    )
+    adaptive_gamma = 1.12 if p25_l < 22.0 else (0.94 if p25_l > 55.0 else 1.04)
+    adaptive_contrast = 12.0 if (p90_l - p10_l) < 45.0 else 6.0
+
+    seeds = [
+        {"shadowLift": 0.0, "gamma": 1.0, "brightness": 0.0, "contrast": 0.0, "saturation": 0.0},
+        clamp_params(
+            {
+                "shadowLift": adaptive_lift,
+                "gamma": adaptive_gamma,
+                "brightness": 0.0,
+                "contrast": adaptive_contrast,
+                "saturation": 0.0,
+            }
+        ),
+        clamp_params(
+            {
+                "shadowLift": float(printer_profile["recommended_toe_lift"]),
+                "gamma": 1.08,
+                "brightness": 0.0,
+                "contrast": 8.0,
+                "saturation": -6.0,
+            }
+        ),
+    ]
+
+    best_params = seeds[0]
+    best_obj = eval_obj(best_params)
+    for seed in seeds[1:]:
+        s = eval_obj(seed)
+        if s > best_obj:
+            best_obj = s
+            best_params = dict(seed)
+
+    step_schedule = [
+        {"shadowLift": 12.0, "contrast": 6.0, "gamma": 0.06, "saturation": 6.0, "brightness": 4.0},
+        {"shadowLift": 4.0, "contrast": 3.0, "gamma": 0.02, "saturation": 3.0, "brightness": 2.0},
+        {"shadowLift": 2.0, "contrast": 1.0, "gamma": 0.01, "saturation": 1.0, "brightness": 1.0},
+    ]
+    keys = ["shadowLift", "contrast", "gamma", "saturation", "brightness"]
+
+    for steps in step_schedule:
+        improved = True
+        it = 0
+        while improved and it < 3:
+            improved = False
+            it += 1
+            for k in keys:
+                delta = steps[k]
+                best_dir_score = best_obj
+                best_cand = best_params
+                for d in (1.0, -1.0):
+                    cand = clamp_params({**best_params, k: best_params[k] + d * delta})
+                    if cand[k] == best_params[k]:
+                        continue
+                    score = eval_obj(cand)
+                    if score > best_dir_score + 1e-4:
+                        best_dir_score = score
+                        best_cand = cand
+                if best_cand is not best_params:
+                    best_params = best_cand
+                    best_obj = best_dir_score
+                    improved = True
+
+    return best_params
+
+
 def run_full_backend_pipeline(
     image_bytes: bytes,
     input_mode: str = "full_card",
@@ -441,6 +565,13 @@ def run_full_backend_pipeline(
     working_image_b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
 
     lut_3d = generate_printer_3d_lut(printer_profile, grid_size=17)
+    recommended_adjustments = optimize_adjustments_coordinate_search(
+        work_rgb=work_rgb,
+        has_3mm_bleed=has_3mm_bleed,
+        input_mode=input_mode,
+        printer_profile=printer_profile,
+        resolution_score=resolution_score,
+    )
 
     return {
         "engine": "fastapi-opencv-cielab-v1",
@@ -459,6 +590,7 @@ def run_full_backend_pipeline(
         },
         "baseline": baseline_result,
         "current": current_result,
+        "recommendedAdjustments": recommended_adjustments,
         "workingImageDataUrl": working_image_b64,
         "printerLut3D": lut_3d,
     }

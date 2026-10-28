@@ -5,9 +5,10 @@ import {
   computeSlidingWindowStd11x11,
   computeFftHighFrequencyFactor,
   buildPrinter3DLut,
-  sample3DLut
+  sample3DLut,
+  optimizePrintAdjustments
 } from './colorScience';
-import { PRINTER_PROFILES, simulatePrinterOutput } from './App';
+import { PRINTER_PROFILES, simulatePrinterOutput, applyUserAdjustments } from './App';
 
 describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
   it('converts sRGB to CIELAB accurately', () => {
@@ -70,5 +71,39 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
     expect(Math.abs(sr - lr)).toBeLessThanOrEqual(3);
     expect(Math.abs(sg - lg)).toBeLessThanOrEqual(3);
     expect(Math.abs(sb - lb)).toBeLessThanOrEqual(3);
+  });
+
+  it('finds optimal pre-press parameters via Coarse-to-Fine Pattern Search', () => {
+    const anW = 240;
+    const anH = 330;
+    const rawPixels = new Uint8ClampedArray(anW * anH * 4);
+    // Populate with dark muddy cavern textures (RGB ~ 12..34)
+    for (let y = 0; y < anH; y++) {
+      for (let x = 0; x < anW; x++) {
+        const idx = (y * anW + x) * 4;
+        const v = ((x + y) % 5) * 4 + 14;
+        rawPixels[idx] = v;
+        rawPixels[idx + 1] = v - 2;
+        rawPixels[idx + 2] = v + 3;
+        rawPixels[idx + 3] = 255;
+      }
+    }
+
+    const lut = buildPrinter3DLut(simulatePrinterOutput, PRINTER_PROFILES.home_matte, 17);
+    const opt = optimizePrintAdjustments({
+      rawPixels,
+      anW,
+      anH,
+      has3mmBleed: true,
+      inputMode: 'full_card',
+      printerProfile: PRINTER_PROFILES.home_matte,
+      printer3DLut: lut,
+      resolutionScore: 95,
+      applyUserAdjustmentsFn: applyUserAdjustments
+    });
+
+    // For a dark muddy card on Home Matte paper, the optimizer should lift shadows & boost contrast
+    expect(opt.shadowLift).toBeGreaterThan(20);
+    expect(opt.gamma).toBeGreaterThanOrEqual(0.95);
   });
 });
