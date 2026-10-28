@@ -932,12 +932,11 @@ export function runFullPrintPipeline({
           maskPixelCount++;
         }
 
-        const [ar, ag, ab] = applyUserAdjustments(
-          rawPixels[p],
-          rawPixels[p + 1],
-          rawPixels[p + 2],
-          adj
-        );
+        // Only apply user adjustments inside the analyzed region (so in 'full_card' Art-Box mode,
+        // the black card border and text box are untouched and only the Art Analysis Region is changed)
+        const [ar, ag, ab] = isAnalyzed
+          ? applyUserAdjustments(rawPixels[p], rawPixels[p + 1], rawPixels[p + 2], adj)
+          : [rawPixels[p], rawPixels[p + 1], rawPixels[p + 2]];
         const [L_adj, a_adj, b_adj] = rgbToLab(ar, ag, ab);
         adjustedL[idx] = L_adj;
 
@@ -1381,7 +1380,10 @@ export default function App() {
           const mapIdx = mapY * vm.anW + mapX;
           const p = (y * w + x) * 4;
 
-          const [ar, ag, ab] = applyUserAdjustments(d[p], d[p + 1], d[p + 2], adjustments);
+          const isMask = vm.inArtMask[mapIdx] === 1;
+          const [ar, ag, ab] = isMask
+            ? applyUserAdjustments(d[p], d[p + 1], d[p + 2], adjustments)
+            : [d[p], d[p + 1], d[p + 2]];
           const [sr, sg, sb] = sample3DLut(ar, ag, ab, lut3D, 17);
           const risk = vm.shadowRiskMap![mapIdx];
 
@@ -1432,12 +1434,26 @@ export default function App() {
         drawBaseImage(ctx, CW, CH);
         const imgData = ctx.getImageData(0, 0, CW, CH);
         const d = imgData.data;
-        for (let i = 0; i < d.length; i += 4) {
-          const [ar, ag, ab] = applyUserAdjustments(d[i], d[i + 1], d[i + 2], adjustments);
-          const [sr, sg, sb] = sample3DLut(ar, ag, ab, lut3D, 17);
-          d[i] = sr;
-          d[i + 1] = sg;
-          d[i + 2] = sb;
+        const abNorm = analysis.current.visualMaps!.artBoxNorm;
+        const ax0 = Math.floor(abNorm.x * CW);
+        const ax1 = Math.ceil((abNorm.x + abNorm.w) * CW);
+        const ay0 = Math.floor(abNorm.y * CH);
+        const ay1 = Math.ceil((abNorm.y + abNorm.h) * CH);
+
+        for (let y = 0; y < CH; y++) {
+          for (let x = 0; x < CW; x++) {
+            const i = (y * CW + x) * 4;
+            const inRegion =
+              inputMode === 'artwork_only' ||
+              (x >= ax0 && x <= ax1 && y >= ay0 && y <= ay1);
+            const [ar, ag, ab] = inRegion
+              ? applyUserAdjustments(d[i], d[i + 1], d[i + 2], adjustments)
+              : [d[i], d[i + 1], d[i + 2]];
+            const [sr, sg, sb] = sample3DLut(ar, ag, ab, lut3D, 17);
+            d[i] = sr;
+            d[i + 1] = sg;
+            d[i + 2] = sb;
+          }
         }
         ctx.putImageData(imgData, 0, 0);
         drawGuidesOverlay(ctx, CW, CH);
@@ -1480,7 +1496,10 @@ export default function App() {
           const mapIdx = mapY * vm.anW + mapX;
           const p = (y * DISP_W + x) * 4;
 
-          const [ar, ag, ab] = applyUserAdjustments(d[p], d[p + 1], d[p + 2], adjustments);
+          const isMask = vm.inArtMask[mapIdx] === 1;
+          const [ar, ag, ab] = isMask
+            ? applyUserAdjustments(d[p], d[p + 1], d[p + 2], adjustments)
+            : [d[p], d[p + 1], d[p + 2]];
           const [sr, sg, sb] = sample3DLut(ar, ag, ab, lut3D, 17);
 
           if (viewMode === 'simulated' || viewMode === 'contrast_grid') {
@@ -1594,11 +1613,29 @@ export default function App() {
 
     const imgData = ctx.getImageData(0, 0, outW, outH);
     const d = imgData.data;
-    for (let i = 0; i < d.length; i += 4) {
-      const [ar, ag, ab] = applyUserAdjustments(d[i], d[i + 1], d[i + 2], adjustments);
-      d[i] = ar;
-      d[i + 1] = ag;
-      d[i + 2] = ab;
+    const hasBleed = analysis.geometry.has3mmBleed;
+    const bleedOffX = hasBleed ? outW * (3 / 69) : 0;
+    const bleedOffY = hasBleed ? outH * (3 / 94) : 0;
+    const trimW = outW - bleedOffX * 2;
+    const trimH = outH - bleedOffY * 2;
+    const ax0 = Math.floor(bleedOffX + trimW * 0.078);
+    const ax1 = Math.ceil(bleedOffX + trimW * 0.922);
+    const ay0 = Math.floor(bleedOffY + trimH * 0.112);
+    const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
+
+    for (let y = 0; y < outH; y++) {
+      for (let x = 0; x < outW; x++) {
+        const i = (y * outW + x) * 4;
+        const inRegion =
+          inputMode === 'artwork_only' ||
+          (x >= ax0 && x <= ax1 && y >= ay0 && y <= ay1);
+        if (inRegion) {
+          const [ar, ag, ab] = applyUserAdjustments(d[i], d[i + 1], d[i + 2], adjustments);
+          d[i] = ar;
+          d[i + 1] = ag;
+          d[i + 2] = ab;
+        }
+      }
     }
     ctx.putImageData(imgData, 0, 0);
 
@@ -1866,7 +1903,7 @@ export default function App() {
             {/* Input Mode Toggle */}
             <div>
               <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
-                Input Evaluation Mode
+                Analysis & Adjustment Region
               </label>
               <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-1 rounded-xl border border-slate-800">
                 <button
@@ -1877,7 +1914,7 @@ export default function App() {
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  Full Card Render
+                  Art Box Only
                 </button>
                 <button
                   onClick={() => setInputMode('artwork_only')}
@@ -1887,13 +1924,13 @@ export default function App() {
                       : 'text-slate-400 hover:text-slate-200'
                   }`}
                 >
-                  Raw Artwork Only
+                  Entire Card
                 </button>
               </div>
               <p className="text-[11px] text-slate-400 mt-1.5 leading-relaxed">
                 {inputMode === 'full_card'
-                  ? 'Masks out the black card border & rules text box so black frames do not skew artwork shadow metrics.'
-                  : 'Analyzes 100% of pixels across the entire uploaded image.'}
+                  ? 'Only analyzes and adjusts the Art Analysis Region, keeping the black card border and text box untouched.'
+                  : 'Analyzes and adjusts 100% of pixels across the entire card (including borders and frame).'}
               </p>
             </div>
 

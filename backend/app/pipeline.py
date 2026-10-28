@@ -103,8 +103,14 @@ def evaluate_color_and_tones(
     mask_pixel_count = int(np.sum(in_art_mask))
     norm_count = max(1, mask_pixel_count)
 
-    # Apply user adjustments and simulate printer output
-    adj_rgb = apply_user_adjustments(work_rgb, adj)
+    # Apply user adjustments ONLY inside the analyzed region (so in 'full_card' Art-Box mode,
+    # the black card border and text box are untouched and only the Art Analysis Region is changed)
+    adj_full = apply_user_adjustments(work_rgb, adj)
+    if input_mode == "artwork_only":
+        adj_rgb = adj_full
+    else:
+        adj_rgb = work_rgb.copy()
+        adj_rgb[in_art_mask] = adj_full[in_art_mask]
     L_adj, a_adj, b_adj = srgb_to_lab(adj_rgb)
 
     sim_rgb = simulate_printer_output(adj_rgb, printer_profile)

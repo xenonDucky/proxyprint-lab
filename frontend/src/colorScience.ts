@@ -482,7 +482,9 @@ export function optimizePrintAdjustments({
     let highDeltaECount = 0;
 
     for (let i = 0; i < totalSub; i++) {
-      const [ar, ag, ab] = applyUserAdjustmentsFn(subR[i], subG[i], subB[i], adj);
+      const [ar, ag, ab] = subMask[i]
+        ? applyUserAdjustmentsFn(subR[i], subG[i], subB[i], adj)
+        : [subR[i], subG[i], subB[i]];
       const [L_adj, a_adj, b_adj] = rgbToLab(ar, ag, ab);
       adjustedL[i] = L_adj;
 

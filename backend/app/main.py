@@ -93,12 +93,15 @@ async def analyze_card_image(
 @app.post("/api/export")
 async def export_print_ready_png(
     file: UploadFile = File(...),
+    input_mode: str = Form("full_card"),
     pad_mpc_bleed: bool = Form(False),
     adjustments_json: Optional[str] = Form(None),
 ):
     """
     Generate a full-resolution, color-compensated, print-ready PNG (300 DPI metadata)
     with optional 3mm MPC bleed padding applied.
+    In 'full_card' (Art Box Only) mode, only the Art Analysis Region is modified,
+    keeping the black card border and text box untouched.
     """
     try:
         image_bytes = await file.read()
@@ -132,7 +135,25 @@ async def export_print_ready_png(
         if adjustments_json:
             adj.update(json.loads(adjustments_json))
 
-        compensated_rgb = apply_user_adjustments(canvas_rgb, adj)
+        if input_mode == "artwork_only":
+            compensated_rgb = apply_user_adjustments(canvas_rgb, adj)
+        else:
+            # Detect whether output canvas has 3mm bleed and compute Art Box coordinates
+            actual_aspect = out_w / max(1.0, float(out_h))
+            is_mpc_aspect = abs(actual_aspect - (69.0 / 94.0)) < abs(actual_aspect - (63.0 / 88.0))
+            has_bleed = pad_mpc_bleed or is_mpc_aspect
+            bx = out_w * (3.0 / 69.0) if has_bleed else 0.0
+            by = out_h * (3.0 / 94.0) if has_bleed else 0.0
+            tw = out_w - bx * 2.0
+            th = out_h - by * 2.0
+            ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
+            ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
+
+            compensated_rgb = canvas_rgb.copy()
+            compensated_rgb[ay0 : ay1 + 1, ax0 : ax1 + 1] = apply_user_adjustments(
+                canvas_rgb[ay0 : ay1 + 1, ax0 : ax1 + 1], adj
+            )
+
         out_pil = Image.fromarray(compensated_rgb)
 
         buf = io.BytesIO()
