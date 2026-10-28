@@ -1,0 +1,115 @@
+# ============================================================================
+# ProxyPrint Lab — Full-Stack .gitignore (React/Vite + Python/FastAPI)
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# 1. Node / Frontend (React, Vite, TypeScript, Vitest)
+# ----------------------------------------------------------------------------
+node_modules/
+**/node_modules/
+dist/
+dist-ssr/
+build/
+out/
+.vite/
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+
+# Package manager caches & logs
+.npm/
+.pnpm-debug.log*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# ----------------------------------------------------------------------------
+# 2. Python / Backend (FastAPI, Uvicorn, Pytest, OpenCV, UV)
+# ----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# Packaging & distribution
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Testing & coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.mypy_cache/
+.dmypy.json
+.ruff_cache/
+.pyre/
+
+# ----------------------------------------------------------------------------
+# 3. Environment Variables & Secrets
+# ----------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+!.env.template
+
+# ----------------------------------------------------------------------------
+# 4. IDEs & Editors (IntelliJ / IdeaProjects, VS Code, Cursor, Zed, Vim)
+# ----------------------------------------------------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
+
+*.swp
+*.swo
+*~
+
+# ----------------------------------------------------------------------------
+# 5. OS & System Files (Linux / X11, macOS, Windows)
+# ----------------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.directory
+.Trash-*
+
+# ----------------------------------------------------------------------------
+# 6. ProxyPrint Lab Temporary / Exported Card Assets & ICC Profiles
+# ----------------------------------------------------------------------------
+*_print_ready_*.png
+proxyprint_ready_*.png
+tmp/
+temp/
+*.tmp
+*.bak
+*.log
