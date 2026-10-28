@@ -319,10 +319,23 @@ def optimize_adjustments_coordinate_search(
     Q_final + 0.35 * Q_weighted - λ ||θ - θ_0||^2.
     """
     sub_rgb = work_rgb[1::4, 1::4]
+    sub_h, sub_w, _ = sub_rgb.shape
     L_sub, _, _ = srgb_to_lab(sub_rgb)
-    p10_l = float(np.percentile(L_sub, 10))
-    p25_l = float(np.percentile(L_sub, 25))
-    p90_l = float(np.percentile(L_sub, 90))
+
+    if input_mode == "artwork_only":
+        art_L = L_sub
+    else:
+        bx = sub_w * (3.0 / 69.0) if has_3mm_bleed else 0.0
+        by = sub_h * (3.0 / 94.0) if has_3mm_bleed else 0.0
+        tw = sub_w - bx * 2.0
+        th = sub_h - by * 2.0
+        mx0, mx1 = int(bx + tw * 0.078), int(bx + tw * 0.922)
+        my0, my1 = int(by + th * 0.112), int(by + th * 0.547)
+        art_L = L_sub[my0 : my1 + 1, mx0 : mx1 + 1]
+
+    p10_l = float(np.percentile(art_L, 10))
+    p25_l = float(np.percentile(art_L, 25))
+    p90_l = float(np.percentile(art_L, 90))
 
     def clamp_params(p: Dict[str, float]) -> Dict[str, float]:
         return {
@@ -484,9 +497,14 @@ def run_full_backend_pipeline(
     std_aspect = float(card_standard["aspect_ratio"])
     aspect_diff_pct = (abs(actual_aspect - std_aspect) / std_aspect) * 100.0
 
-    # Outer 3mm bleed border dark check
+    # Outer 3mm bleed border vs. inner 3mm black frame border check:
+    # A standard 63x88mm trim card already has a ~3mm black border, so checking only
+    # the outer 3mm ring falsely flags trim cards as having 3mm bleed and shrinks the Art Box!
+    # A card with true 3mm bleed has ~6mm of dark border (3mm bleed + 3mm frame border).
     edge_band_x = max(4, int(round(an_w * (3.0 / 69.0))))
     edge_band_y = max(4, int(round(an_h * (3.0 / 94.0))))
+    inner_band_x = max(8, int(round(an_w * (5.5 / 69.0))))
+    inner_band_y = max(8, int(round(an_h * (5.5 / 94.0))))
     L_work, _, _ = srgb_to_lab(work_rgb)
 
     edge_mask = np.zeros((an_h, an_w), dtype=bool)
@@ -495,18 +513,26 @@ def run_full_backend_pipeline(
     edge_mask[:, :edge_band_x] = True
     edge_mask[:, an_w - edge_band_x :] = True
 
+    inner_ring_mask = np.zeros((an_h, an_w), dtype=bool)
+    inner_ring_mask[:inner_band_y, :] = True
+    inner_ring_mask[an_h - inner_band_y :, :] = True
+    inner_ring_mask[:, :inner_band_x] = True
+    inner_ring_mask[:, an_w - inner_band_x :] = True
+    inner_ring_mask = inner_ring_mask & (~edge_mask)
+
     outer_border_dark_ratio = float(np.sum(L_work[edge_mask] < 14.0) / max(1, np.sum(edge_mask)))
+    inner_ring_dark_ratio = float(
+        np.sum(L_work[inner_ring_mask] < 14.0) / max(1, np.sum(inner_ring_mask))
+    )
+    is_mpc_aspect = abs(actual_aspect - (69.0 / 94.0)) < abs(actual_aspect - (63.0 / 88.0))
+
     has_3mm_bleed = bool(
         pad_mpc_bleed
-        or (
-            effective_w >= 800
-            and effective_h >= 1090
-            and abs(actual_aspect - (69.0 / 94.0)) < 0.025
-        )
-        or outer_border_dark_ratio > 0.85
+        or (outer_border_dark_ratio > 0.85 and inner_ring_dark_ratio > 0.72)
+        or (is_mpc_aspect and effective_w >= 800 and effective_h >= 1090 and outer_border_dark_ratio > 0.75)
     )
 
-    # Full/High-Res Laplacian + 2D FFT High-Frequency Sharpness Check
+    # Full/High-Res Laplacian + 2D FFT High-Frequency Sharpness Check aligned with Art Box
     sharp_w = min(480, raw_w)
     sharp_h = min(660, raw_h)
     sharp_rgb = cv2.resize(raw_rgb, (sharp_w, sharp_h), interpolation=cv2.INTER_AREA)
@@ -516,8 +542,15 @@ def run_full_backend_pipeline(
         + 0.114 * sharp_rgb[..., 2].astype(np.float32)
     )
 
-    y_start, y_end = int(sharp_h * 0.12), int(sharp_h * 0.55)
-    x_start, x_end = int(sharp_w * 0.10), int(sharp_w * 0.90)
+    sharp_bleed_x = sharp_w * (3.0 / 69.0) if has_3mm_bleed else 0.0
+    sharp_bleed_y = sharp_h * (3.0 / 94.0) if has_3mm_bleed else 0.0
+    sharp_trim_w = sharp_w - sharp_bleed_x * 2.0
+    sharp_trim_h = sharp_h - sharp_bleed_y * 2.0
+
+    x_start = max(0, int(np.floor(sharp_bleed_x + sharp_trim_w * 0.078)))
+    x_end = min(sharp_w, int(np.ceil(sharp_bleed_x + sharp_trim_w * 0.922)))
+    y_start = max(0, int(np.floor(sharp_bleed_y + sharp_trim_h * 0.112)))
+    y_end = min(sharp_h, int(np.ceil(sharp_bleed_y + sharp_trim_h * 0.547)))
     art_gray = gray[y_start:y_end, x_start:x_end]
 
     lap = cv2.Laplacian(art_gray, cv2.CV_32F, ksize=1)

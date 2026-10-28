@@ -779,26 +779,48 @@ export function runFullPrintPipeline({
   const actualAspect = effectiveW / effectiveH;
   const aspectDiffPct = (Math.abs(actualAspect - cardStandard.aspectRatio) / cardStandard.aspectRatio) * 100;
 
+  // Detect whether the uploaded card already includes a 3mm MPC bleed margin:
+  // A standard trim-sized MTG card (63x88mm) ALREADY has a ~3mm black border around the frame,
+  // so checking outerBorderDarkRatio > 0.85 alone falsely triggers on standard 63x88mm cards
+  // and shrinks the Art Analysis Region by an extra 3mm on every side!
+  // Instead, check whether the outer dark border is double-thick (~6mm total = 3mm bleed + 3mm border)
+  // or whether the image's aspect ratio / dimensions match 69x94mm MPC bleed.
   let outerEdgeDarkCount = 0;
   let outerEdgeTotal = 0;
+  let innerRingDarkCount = 0;
+  let innerRingTotal = 0;
   const edgeBandX = Math.max(4, Math.round(AN_W * (3 / 69)));
   const edgeBandY = Math.max(4, Math.round(AN_H * (3 / 94)));
+  const innerBandX = Math.max(8, Math.round(AN_W * (5.5 / 69)));
+  const innerBandY = Math.max(8, Math.round(AN_H * (5.5 / 94)));
 
   for (let y = 0; y < AN_H; y++) {
     for (let x = 0; x < AN_W; x++) {
-      if (x < edgeBandX || x >= AN_W - edgeBandX || y < edgeBandY || y >= AN_H - edgeBandY) {
+      const isOuter = x < edgeBandX || x >= AN_W - edgeBandX || y < edgeBandY || y >= AN_H - edgeBandY;
+      const isInnerRing =
+        !isOuter &&
+        (x < innerBandX || x >= AN_W - innerBandX || y < innerBandY || y >= AN_H - innerBandY);
+      if (isOuter || isInnerRing) {
         const idx = (y * AN_W + x) * 4;
         const [L] = rgbToLab(rawPixels[idx], rawPixels[idx + 1], rawPixels[idx + 2]);
-        if (L < 14) outerEdgeDarkCount++;
-        outerEdgeTotal++;
+        if (isOuter) {
+          if (L < 14) outerEdgeDarkCount++;
+          outerEdgeTotal++;
+        } else {
+          if (L < 14) innerRingDarkCount++;
+          innerRingTotal++;
+        }
       }
     }
   }
   const outerBorderDarkRatio = outerEdgeDarkCount / Math.max(1, outerEdgeTotal);
+  const innerRingDarkRatio = innerRingDarkCount / Math.max(1, innerRingTotal);
+  const isMpcAspect = Math.abs(actualAspect - 69 / 94) < Math.abs(actualAspect - 63 / 88);
+
   const has3mmBleed =
     padMpcBleed ||
-    (effectiveW >= 800 && effectiveH >= 1090 && Math.abs(actualAspect - 69 / 94) < 0.025) ||
-    outerBorderDarkRatio > 0.85;
+    (outerBorderDarkRatio > 0.85 && innerRingDarkRatio > 0.72) ||
+    (isMpcAspect && effectiveW >= 800 && effectiveH >= 1090 && outerBorderDarkRatio > 0.75);
 
   const sharpW = Math.min(480, rawW);
   const sharpH = Math.min(660, rawH);
@@ -818,10 +840,16 @@ export function runFullPrintPipeline({
   let lapSum = 0;
   let lapSqSum = 0;
   let lapCount = 0;
-  const yStart = Math.floor(sharpH * 0.12);
-  const yEnd = Math.floor(sharpH * 0.55);
-  const xStart = Math.floor(sharpW * 0.10);
-  const xEnd = Math.floor(sharpW * 0.90);
+  // Crop exactly to the unmasked Art Box for Laplacian + 2D FFT sharpness analysis
+  const sharpBleedX = has3mmBleed ? sharpW * (3 / 69) : 0;
+  const sharpBleedY = has3mmBleed ? sharpH * (3 / 94) : 0;
+  const sharpTrimW = sharpW - sharpBleedX * 2;
+  const sharpTrimH = sharpH - sharpBleedY * 2;
+
+  const xStart = Math.max(1, Math.floor(sharpBleedX + sharpTrimW * 0.078));
+  const xEnd = Math.min(sharpW - 1, Math.ceil(sharpBleedX + sharpTrimW * 0.922));
+  const yStart = Math.max(1, Math.floor(sharpBleedY + sharpTrimH * 0.112));
+  const yEnd = Math.min(sharpH - 1, Math.ceil(sharpBleedY + sharpTrimH * 0.547));
 
   for (let y = yStart; y < yEnd; y++) {
     for (let x = xStart; x < xEnd; x++) {
