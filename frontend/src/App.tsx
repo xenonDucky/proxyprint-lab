@@ -17,7 +17,11 @@ import {
   Flame,
   Image as ImageIcon,
   Cpu,
-  Server
+  Server,
+  FolderArchive,
+  CheckCircle2,
+  Trash2,
+  Plus
 } from 'lucide-react';
 import {
   rgbToLab,
@@ -26,8 +30,10 @@ import {
   computeFftHighFrequencyFactor,
   buildPrinter3DLut,
   sample3DLut,
-  optimizePrintAdjustments
+  optimizePrintAdjustments,
+  AdjustmentParams
 } from './colorScience';
+import { createZipArchive, dataUrlToUint8Array, ZipEntryInput } from './zipBuilder';
 
 // ============================================================================
 // 1. CONSTANTS: CARD GEOMETRY & PRINTER PROFILES
@@ -1197,13 +1203,153 @@ export function runFullPrintPipeline({
 }
 
 // ============================================================================
-// 5. MAIN APPLICATION COMPONENT
+// 5. BATCH ITEM & EXPORT HELPER
+// ============================================================================
+
+interface BatchCardItem {
+  id: string;
+  fileName: string;
+  sourceCanvas: HTMLCanvasElement;
+  padBleed: boolean;
+  adjustments: AdjustmentParams;
+  baselineScores: any;
+  optimizedScores: any;
+  geometry: any;
+  origThumbUrl: string;
+  simThumbUrl: string;
+}
+
+function renderCardToPrintReadyCanvas(
+  sourceCanvas: HTMLCanvasElement,
+  padMpcBleed: boolean,
+  has3mmBleed: boolean,
+  inputMode: string,
+  adjustments: AdjustmentParams
+): HTMLCanvasElement {
+  const rawW = sourceCanvas.width;
+  const rawH = sourceCanvas.height;
+  const outW = padMpcBleed ? Math.round(rawW * (69 / 63)) : rawW;
+  const outH = padMpcBleed ? Math.round(rawH * (94 / 88)) : rawH;
+
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = outW;
+  outCanvas.height = outH;
+  const ctx = outCanvas.getContext('2d')!;
+
+  ctx.fillStyle = '#070709';
+  ctx.fillRect(0, 0, outW, outH);
+
+  const px = padMpcBleed ? Math.round(outW * (3 / 69)) : 0;
+  const py = padMpcBleed ? Math.round(outH * (3 / 94)) : 0;
+  ctx.drawImage(sourceCanvas, px, py, outW - px * 2, outH - py * 2);
+
+  const imgData = ctx.getImageData(0, 0, outW, outH);
+  const d = imgData.data;
+  const effectiveBleed = has3mmBleed || padMpcBleed;
+  const bleedOffX = effectiveBleed ? outW * (3 / 69) : 0;
+  const bleedOffY = effectiveBleed ? outH * (3 / 94) : 0;
+  const trimW = outW - bleedOffX * 2;
+  const trimH = outH - bleedOffY * 2;
+  const ax0 = Math.floor(bleedOffX + trimW * 0.078);
+  const ax1 = Math.ceil(bleedOffX + trimW * 0.922);
+  const ay0 = Math.floor(bleedOffY + trimH * 0.112);
+  const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
+
+  for (let y = 0; y < outH; y++) {
+    for (let x = 0; x < outW; x++) {
+      const i = (y * outW + x) * 4;
+      const inRegion =
+        inputMode === 'artwork_only' ||
+        (x >= ax0 && x <= ax1 && y >= ay0 && y <= ay1);
+      if (inRegion) {
+        const [ar, ag, ab] = applyUserAdjustments(d[i], d[i + 1], d[i + 2], adjustments);
+        d[i] = ar;
+        d[i + 1] = ag;
+        d[i + 2] = ab;
+      }
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return outCanvas;
+}
+
+function generateBatchThumbnails(
+  sourceCanvas: HTMLCanvasElement,
+  padMpcBleed: boolean,
+  has3mmBleed: boolean,
+  inputMode: string,
+  adjustments: AdjustmentParams,
+  printer3DLut: Uint8Array
+): { origThumbUrl: string; simThumbUrl: string } {
+  const TW = 156;
+  const TH = 214;
+
+  const origC = document.createElement('canvas');
+  origC.width = TW;
+  origC.height = TH;
+  const oCtx = origC.getContext('2d')!;
+  oCtx.fillStyle = '#070709';
+  oCtx.fillRect(0, 0, TW, TH);
+  const px = padMpcBleed ? Math.round(TW * (3 / 69)) : 0;
+  const py = padMpcBleed ? Math.round(TH * (3 / 94)) : 0;
+  oCtx.drawImage(sourceCanvas, px, py, TW - px * 2, TH - py * 2);
+
+  const simC = document.createElement('canvas');
+  simC.width = TW;
+  simC.height = TH;
+  const sCtx = simC.getContext('2d')!;
+  sCtx.drawImage(origC, 0, 0);
+
+  const imgData = sCtx.getImageData(0, 0, TW, TH);
+  const d = imgData.data;
+  const effectiveBleed = has3mmBleed || padMpcBleed;
+  const bleedOffX = effectiveBleed ? TW * (3 / 69) : 0;
+  const bleedOffY = effectiveBleed ? TH * (3 / 94) : 0;
+  const trimW = TW - bleedOffX * 2;
+  const trimH = TH - bleedOffY * 2;
+  const ax0 = Math.floor(bleedOffX + trimW * 0.078);
+  const ax1 = Math.ceil(bleedOffX + trimW * 0.922);
+  const ay0 = Math.floor(bleedOffY + trimH * 0.112);
+  const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
+
+  for (let y = 0; y < TH; y++) {
+    for (let x = 0; x < TW; x++) {
+      const i = (y * TW + x) * 4;
+      const inRegion =
+        inputMode === 'artwork_only' ||
+        (x >= ax0 && x <= ax1 && y >= ay0 && y <= ay1);
+      const [ar, ag, ab] = inRegion
+        ? applyUserAdjustments(d[i], d[i + 1], d[i + 2], adjustments)
+        : [d[i], d[i + 1], d[i + 2]];
+      const [sr, sg, sb] = sample3DLut(ar, ag, ab, printer3DLut, 17);
+      d[i] = sr;
+      d[i + 1] = sg;
+      d[i + 2] = sb;
+    }
+  }
+  sCtx.putImageData(imgData, 0, 0);
+
+  return {
+    origThumbUrl: origC.toDataURL('image/jpeg', 0.88),
+    simThumbUrl: simC.toDataURL('image/jpeg', 0.88)
+  };
+}
+
+// ============================================================================
+// 6. MAIN APPLICATION COMPONENT
 // ============================================================================
 
 export default function App() {
+  const [studioMode, setStudioMode] = useState<'single' | 'batch'>('single');
   const [activePresetId, setActivePresetId] = useState<string | null>('abyssal_dragon');
   const [customFileName, setCustomFileName] = useState<string | null>(null);
   const [sourceCanvas, setSourceCanvas] = useState<HTMLCanvasElement | null>(null);
+
+  // Batch Queue State
+  const [batchItems, setBatchItems] = useState<BatchCardItem[]>([]);
+  const [isBatchProcessing, setIsBatchProcessing] = useState(false);
+  const [isExportingZip, setIsExportingZip] = useState(false);
+  const batchFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [inputMode, setInputMode] = useState('full_card'); // 'full_card' | 'artwork_only'
   const [cardStandardId, setCardStandardId] = useState('mpc_bleed');
@@ -1593,59 +1739,206 @@ export default function App() {
   };
 
   const handleExportPng = () => {
-    if (!sourceCanvas) return;
-    const rawW = sourceCanvas.width;
-    const rawH = sourceCanvas.height;
-    const outW = padMpcBleed ? Math.round(rawW * (69 / 63)) : rawW;
-    const outH = padMpcBleed ? Math.round(rawH * (94 / 88)) : rawH;
-
-    const outCanvas = document.createElement('canvas');
-    outCanvas.width = outW;
-    outCanvas.height = outH;
-    const ctx = outCanvas.getContext('2d')!;
-
-    ctx.fillStyle = '#070709';
-    ctx.fillRect(0, 0, outW, outH);
-
-    const px = padMpcBleed ? Math.round(outW * (3 / 69)) : 0;
-    const py = padMpcBleed ? Math.round(outH * (3 / 94)) : 0;
-    ctx.drawImage(sourceCanvas, px, py, outW - px * 2, outH - py * 2);
-
-    const imgData = ctx.getImageData(0, 0, outW, outH);
-    const d = imgData.data;
-    const hasBleed = analysis.geometry.has3mmBleed;
-    const bleedOffX = hasBleed ? outW * (3 / 69) : 0;
-    const bleedOffY = hasBleed ? outH * (3 / 94) : 0;
-    const trimW = outW - bleedOffX * 2;
-    const trimH = outH - bleedOffY * 2;
-    const ax0 = Math.floor(bleedOffX + trimW * 0.078);
-    const ax1 = Math.ceil(bleedOffX + trimW * 0.922);
-    const ay0 = Math.floor(bleedOffY + trimH * 0.112);
-    const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
-
-    for (let y = 0; y < outH; y++) {
-      for (let x = 0; x < outW; x++) {
-        const i = (y * outW + x) * 4;
-        const inRegion =
-          inputMode === 'artwork_only' ||
-          (x >= ax0 && x <= ax1 && y >= ay0 && y <= ay1);
-        if (inRegion) {
-          const [ar, ag, ab] = applyUserAdjustments(d[i], d[i + 1], d[i + 2], adjustments);
-          d[i] = ar;
-          d[i + 1] = ag;
-          d[i + 2] = ab;
-        }
-      }
-    }
-    ctx.putImageData(imgData, 0, 0);
+    if (!sourceCanvas || !analysis) return;
+    const outCanvas = renderCardToPrintReadyCanvas(
+      sourceCanvas,
+      padMpcBleed,
+      analysis.geometry.has3mmBleed,
+      inputMode,
+      adjustments
+    );
 
     const link = document.createElement('a');
     const baseName = customFileName
       ? customFileName.replace(/\.[^/.]+$/, '')
       : activePresetId || 'mtg_proxy';
-    link.download = `${baseName}_print_ready_${outW}x${outH}.png`;
+    link.download = `${baseName}_print_ready_${outCanvas.width}x${outCanvas.height}.png`;
     link.href = outCanvas.toDataURL('image/png');
     link.click();
+  };
+
+  // Process a single canvas into an auto-optimized BatchCardItem
+  const buildOptimizedBatchItem = useCallback(
+    (c: HTMLCanvasElement, fileName: string, id: string): BatchCardItem => {
+      const initialAnalysis = runFullPrintPipeline({
+        sourceCanvas: c,
+        inputMode,
+        cardStandard,
+        printerProfile,
+        adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0 },
+        padMpcBleed: false
+      })!;
+
+      const shouldPadBleed =
+        cardStandard.requiresBleed && !initialAnalysis.geometry.has3mmBleed;
+
+      const workingAnalysis = shouldPadBleed
+        ? runFullPrintPipeline({
+            sourceCanvas: c,
+            inputMode,
+            cardStandard,
+            printerProfile,
+            adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0 },
+            padMpcBleed: true
+          })!
+        : initialAnalysis;
+
+      const optParams = optimizePrintAdjustments({
+        rawPixels: workingAnalysis.rawAnalysisPixels,
+        anW: workingAnalysis.anW,
+        anH: workingAnalysis.anH,
+        has3mmBleed: workingAnalysis.geometry.has3mmBleed,
+        inputMode,
+        printerProfile,
+        printer3DLut: workingAnalysis.printer3DLut,
+        resolutionScore: workingAnalysis.resolutionScore,
+        applyUserAdjustmentsFn: applyUserAdjustments
+      });
+
+      const finalAnalysis = runFullPrintPipeline({
+        sourceCanvas: c,
+        inputMode,
+        cardStandard,
+        printerProfile,
+        adjustments: optParams,
+        padMpcBleed: shouldPadBleed
+      })!;
+
+      const thumbs = generateBatchThumbnails(
+        c,
+        shouldPadBleed,
+        finalAnalysis.geometry.has3mmBleed,
+        inputMode,
+        optParams,
+        finalAnalysis.printer3DLut
+      );
+
+      return {
+        id,
+        fileName,
+        sourceCanvas: c,
+        padBleed: shouldPadBleed,
+        adjustments: optParams,
+        baselineScores: initialAnalysis.baseline.scores,
+        optimizedScores: finalAnalysis.current.scores,
+        geometry: finalAnalysis.geometry,
+        origThumbUrl: thumbs.origThumbUrl,
+        simThumbUrl: thumbs.simThumbUrl
+      };
+    },
+    [inputMode, cardStandard, printerProfile]
+  );
+
+  // Re-optimize existing batch items whenever inputMode, cardStandard, or printerProfile changes
+  useEffect(() => {
+    if (batchItems.length === 0) return;
+    setBatchItems((prev) =>
+      prev.map((item) => buildOptimizedBatchItem(item.sourceCanvas, item.fileName, item.id))
+    );
+  }, [inputMode, cardStandardId, printerProfileId]);
+
+  // Handle multi-file upload in Batch Auto-Adjust mode
+  const handleBatchFilesUpload = useCallback(
+    async (fileList: FileList | File[] | null) => {
+      if (!fileList || fileList.length === 0) return;
+      const files = Array.from(fileList);
+      setIsBatchProcessing(true);
+      setStudioMode('batch');
+
+      const loadFileAsCanvas = (file: File): Promise<{ canvas: HTMLCanvasElement; name: string }> =>
+        new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+              const c = document.createElement('canvas');
+              c.width = img.naturalWidth || img.width;
+              c.height = img.naturalHeight || img.height;
+              const ctx = c.getContext('2d')!;
+              ctx.drawImage(img, 0, 0);
+              resolve({ canvas: c, name: file.name });
+            };
+            img.onerror = reject;
+            img.src = e.target?.result as string;
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+
+      try {
+        const newItems: BatchCardItem[] = [];
+        for (let i = 0; i < files.length; i++) {
+          const { canvas, name } = await loadFileAsCanvas(files[i]);
+          const id = `${Date.now()}_${i}_${name}`;
+          newItems.push(buildOptimizedBatchItem(canvas, name, id));
+        }
+        setBatchItems((prev) => [...prev, ...newItems]);
+      } finally {
+        setIsBatchProcessing(false);
+      }
+    },
+    [buildOptimizedBatchItem]
+  );
+
+  // Load the 4 built-in calibration cards into Batch mode for instant demo/testing
+  const handleLoadDemoBatch = () => {
+    setIsBatchProcessing(true);
+    setStudioMode('batch');
+    setTimeout(() => {
+      const demoItems = BUILTIN_PRESETS.map((preset, idx) => {
+        const c = generatePresetCardCanvas(preset.id);
+        return buildOptimizedBatchItem(c, `${preset.id}.png`, `demo_${Date.now()}_${idx}`);
+      });
+      setBatchItems(demoItems);
+      setIsBatchProcessing(false);
+    }, 20);
+  };
+
+  // Export all batch items as a single print-ready ZIP archive
+  const handleExportBatchZip = async () => {
+    if (batchItems.length === 0) return;
+    setIsExportingZip(true);
+
+    setTimeout(() => {
+      try {
+        const entries: ZipEntryInput[] = batchItems.map((item, idx) => {
+          const outCanvas = renderCardToPrintReadyCanvas(
+            item.sourceCanvas,
+            item.padBleed,
+            item.geometry.has3mmBleed,
+            inputMode,
+            item.adjustments
+          );
+          const dataUrl = outCanvas.toDataURL('image/png');
+          const bytes = dataUrlToUint8Array(dataUrl);
+          const cleanName = item.fileName.replace(/\.[^/.]+$/, '');
+          return {
+            filename: `${String(idx + 1).padStart(2, '0')}_${cleanName}_print_ready_${outCanvas.width}x${outCanvas.height}.png`,
+            data: bytes
+          };
+        });
+
+        const zipBlob = createZipArchive(entries);
+        const url = URL.createObjectURL(zipBlob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `proxyprint_batch_${printerProfileId}_${batchItems.length}cards.zip`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
+      } finally {
+        setIsExportingZip(false);
+      }
+    }, 20);
+  };
+
+  // Open a specific batch card in Single Card Inspector for manual fine-tuning
+  const handleInspectBatchItem = (item: BatchCardItem) => {
+    setActivePresetId(null);
+    setCustomFileName(item.fileName);
+    setSourceCanvas(item.sourceCanvas);
+    setPadMpcBleed(item.padBleed);
+    setAdjustments({ ...item.adjustments });
+    setStudioMode('single');
   };
 
   const resetAdjustments = () => {
@@ -1755,49 +2048,119 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right Header Actions: Overall Suitability Pill & Export */}
+          {/* Right Header Actions: Mode Switcher, Overall Suitability Pill & Export */}
           <div className="flex items-center gap-3 flex-wrap">
-            <div
-              className={`flex items-center gap-3 px-3.5 py-1.5 rounded-xl border ${overallStyle.bg} ${overallStyle.border}`}
-            >
-              <div>
-                <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
-                  Overall Printability
-                </div>
-                <div className="flex items-baseline gap-2">
-                  <span className={`text-xl font-extrabold ${overallStyle.text}`}>
-                    {curScores.overall}/100
-                  </span>
-                  {hasAnyAdjustment && curScores.overall !== baseScores.overall && (
-                    <span className="text-xs font-semibold text-emerald-400">
-                      ({curScores.overall > baseScores.overall ? '+' : ''}
-                      {curScores.overall - baseScores.overall} vs original)
-                    </span>
-                  )}
-                </div>
-              </div>
-              <span
-                className={`text-xs font-semibold px-2.5 py-1 rounded-lg border ${overallStyle.bg} ${overallStyle.border} ${overallStyle.text}`}
+            {/* Studio Mode Switcher: Single Card vs Batch Auto-Adjust & ZIP */}
+            <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800">
+              <button
+                onClick={() => setStudioMode('single')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                  studioMode === 'single'
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
               >
-                {overallStyle.label}
-              </span>
+                <Sliders className="w-3.5 h-3.5" />
+                Single Card Studio
+              </button>
+              <button
+                onClick={() => setStudioMode('batch')}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                  studioMode === 'batch'
+                    ? 'bg-indigo-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <FolderArchive className="w-3.5 h-3.5" />
+                Batch Auto-Adjust &amp; ZIP
+                {batchItems.length > 0 && (
+                  <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
+                    {batchItems.length}
+                  </span>
+                )}
+              </button>
             </div>
 
-            <button
-              onClick={handleAutoOptimize}
-              className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/25 transition cursor-pointer"
-            >
-              <Sparkles className="w-4 h-4" />
-              Auto-Optimize for Printer
-            </button>
+            {studioMode === 'single' ? (
+              <>
+                <div
+                  className={`flex items-center gap-3 px-3.5 py-1.5 rounded-xl border ${overallStyle.bg} ${overallStyle.border}`}
+                >
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">
+                      Overall Printability
+                    </div>
+                    <div className="flex items-baseline gap-2">
+                      <span className={`text-xl font-extrabold ${overallStyle.text}`}>
+                        {curScores.overall}/100
+                      </span>
+                      {hasAnyAdjustment && curScores.overall !== baseScores.overall && (
+                        <span className="text-xs font-semibold text-emerald-400">
+                          ({curScores.overall > baseScores.overall ? '+' : ''}
+                          {curScores.overall - baseScores.overall} vs original)
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <span
+                    className={`text-xs font-semibold px-2.5 py-1 rounded-lg border ${overallStyle.bg} ${overallStyle.border} ${overallStyle.text}`}
+                  >
+                    {overallStyle.label}
+                  </span>
+                </div>
 
-            <button
-              onClick={handleExportPng}
-              className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold transition cursor-pointer"
-            >
-              <Download className="w-4 h-4 text-indigo-400" />
-              Export Print-Ready PNG
-            </button>
+                <button
+                  onClick={handleAutoOptimize}
+                  className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white text-xs font-semibold shadow-lg shadow-indigo-600/25 transition cursor-pointer"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Auto-Optimize for Printer
+                </button>
+
+                <button
+                  onClick={handleExportPng}
+                  className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+                >
+                  <Download className="w-4 h-4 text-indigo-400" />
+                  Export Print-Ready PNG
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  onClick={() => batchFileInputRef.current?.click()}
+                  className="flex items-center gap-2 px-3.5 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-100 border border-slate-700 text-xs font-semibold transition cursor-pointer"
+                >
+                  <Plus className="w-4 h-4 text-indigo-400" />
+                  Add Cards to Batch
+                </button>
+                <input
+                  ref={batchFileInputRef}
+                  type="file"
+                  multiple
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={(e) => {
+                    handleBatchFilesUpload(e.target.files);
+                    e.target.value = '';
+                  }}
+                />
+                <button
+                  onClick={handleExportBatchZip}
+                  disabled={batchItems.length === 0 || isExportingZip}
+                  className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-semibold shadow-lg transition cursor-pointer ${
+                    batchItems.length === 0 || isExportingZip
+                      ? 'bg-slate-800 text-slate-500 border border-slate-800 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/25'
+                  }`}
+                >
+                  <FolderArchive className="w-4 h-4" />
+                  {isExportingZip
+                    ? 'Building ZIP...'
+                    : `Export All as ZIP (${batchItems.length})`}
+                </button>
+              </>
+            )}
           </div>
         </div>
       </header>
@@ -1996,6 +2359,210 @@ export default function App() {
           </div>
         </section>
 
+        {/* ================================================================ */}
+        {/* CENTER & RIGHT COLUMNS: SINGLE CARD STUDIO vs BATCH QUEUE        */}
+        {/* ================================================================ */}
+        {studioMode === 'batch' ? (
+          <section className="lg:col-span-9 flex flex-col gap-5">
+            {/* Batch Upload & Summary Control Bar */}
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div>
+                  <h2 className="text-sm font-bold uppercase tracking-wider text-white flex items-center gap-2">
+                    <FolderArchive className="w-4 h-4 text-indigo-400" />
+                    Batch Auto-Adjust &amp; Print-Ready ZIP Exporter
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Upload multiple cards at once — each card is individually analyzed and auto-optimized for{' '}
+                    <span className="text-indigo-300 font-semibold">{printerProfile.name}</span>{' '}
+                    ({inputMode === 'full_card' ? 'Art Box Only' : 'Entire Card'}).
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <button
+                    onClick={handleLoadDemoBatch}
+                    className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                  >
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    Load 4 Sample Cards
+                  </button>
+                  {batchItems.length > 0 && (
+                    <button
+                      onClick={() => setBatchItems([])}
+                      className="px-3 py-2 rounded-xl bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border border-rose-500/30 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      Clear All
+                    </button>
+                  )}
+                  <button
+                    onClick={handleExportBatchZip}
+                    disabled={batchItems.length === 0 || isExportingZip}
+                    className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 shadow-lg transition cursor-pointer ${
+                      batchItems.length === 0 || isExportingZip
+                        ? 'bg-slate-800 text-slate-500 border border-slate-800 cursor-not-allowed'
+                        : 'bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow-emerald-600/25'
+                    }`}
+                  >
+                    <FolderArchive className="w-4 h-4" />
+                    {isExportingZip
+                      ? 'Packaging ZIP Archive...'
+                      : `Download Print-Ready ZIP (${batchItems.length} Cards)`}
+                  </button>
+                </div>
+              </div>
+
+              {/* Multi-File Drag & Drop Zone */}
+              <div
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  handleBatchFilesUpload(e.dataTransfer.files);
+                }}
+                onClick={() => batchFileInputRef.current?.click()}
+                className="border-2 border-dashed border-indigo-500/40 hover:border-indigo-400 bg-slate-950/70 rounded-xl p-6 text-center cursor-pointer transition flex flex-col items-center justify-center gap-2"
+              >
+                <div className="w-10 h-10 rounded-full bg-indigo-500/15 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
+                  <Upload className="w-5 h-5" />
+                </div>
+                <div className="text-sm font-bold text-slate-200">
+                  {isBatchProcessing
+                    ? 'Analyzing & Auto-Optimizing Cards...'
+                    : 'Drop multiple MTG proxy images here or click to select files'}
+                </div>
+                <p className="text-xs text-slate-400 max-w-xl">
+                  Automatically runs the 6-Stage Pipeline + Coarse-to-Fine Pattern Search on every card, pads missing 3mm MPC bleed if required, and packages all compensated PNGs into a single `.zip`.
+                </p>
+              </div>
+            </div>
+
+            {/* Batch Cards Grid */}
+            {batchItems.length === 0 ? (
+              <div className="flex-1 bg-slate-900/50 border border-slate-800/80 rounded-2xl p-12 flex flex-col items-center justify-center text-center">
+                <FolderArchive className="w-10 h-10 text-slate-600 mb-3" />
+                <h3 className="text-sm font-bold text-slate-300">
+                  No Cards in Batch Queue Yet
+                </h3>
+                <p className="text-xs text-slate-500 mt-1 max-w-md">
+                  Select multiple PNG/JPG/WebP card images above, or click &ldquo;Load 4 Sample Cards&rdquo; to test instant batch optimization and ZIP export.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                {batchItems.map((item) => {
+                  const baseScore = item.baselineScores.overall;
+                  const optScore = item.optimizedScores.overall;
+                  const diff = optScore - baseScore;
+                  const badge = getScoreBadgeStyle(optScore);
+
+                  return (
+                    <div
+                      key={item.id}
+                      className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col justify-between gap-3"
+                    >
+                      <div>
+                        {/* Card Header */}
+                        <div className="flex items-start justify-between gap-2 mb-3">
+                          <div className="min-w-0">
+                            <div
+                              className="text-xs font-bold text-white truncate"
+                              title={item.fileName}
+                            >
+                              {item.fileName}
+                            </div>
+                            <div className="text-[10px] text-slate-400 font-mono">
+                              {item.geometry.effectiveW}×{item.geometry.effectiveH}px •{' '}
+                              {item.geometry.effectiveOpticalPpi} PPI
+                              {item.padBleed ? ' • +3mm Bleed Added' : ''}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() =>
+                              setBatchItems((prev) => prev.filter((x) => x.id !== item.id))
+                            }
+                            className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer"
+                            title="Remove from batch"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+
+                        {/* Before / After Thumbnails */}
+                        <div className="grid grid-cols-2 gap-2.5 bg-slate-950/90 p-2.5 rounded-xl border border-slate-800">
+                          <div className="flex flex-col items-center">
+                            <span className="text-[10px] font-semibold text-slate-400 mb-1">
+                              Original ({baseScore}/100)
+                            </span>
+                            <img
+                              src={item.origThumbUrl}
+                              alt="Original"
+                              className="w-full max-w-[125px] h-auto rounded-lg border border-slate-800"
+                            />
+                          </div>
+                          <div className="flex flex-col items-center">
+                            <span className="text-[10px] font-bold text-emerald-400 mb-1 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3" />
+                              Auto-Adjusted ({optScore}/100)
+                            </span>
+                            <img
+                              src={item.simThumbUrl}
+                              alt="Simulated Print"
+                              className="w-full max-w-[125px] h-auto rounded-lg border border-indigo-500/50 shadow-md"
+                            />
+                          </div>
+                        </div>
+
+                        {/* Applied Optimal Parameters Pills */}
+                        <div className="mt-3 flex flex-wrap gap-1.5">
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">
+                            Toe Lift: +{item.adjustments.shadowLift}%
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                            γ: {item.adjustments.gamma.toFixed(2)}
+                          </span>
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                            Contrast: {item.adjustments.contrast >= 0 ? `+${item.adjustments.contrast}` : item.adjustments.contrast}%
+                          </span>
+                          {item.adjustments.saturation !== 0 && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                              Sat: {item.adjustments.saturation >= 0 ? `+${item.adjustments.saturation}` : item.adjustments.saturation}%
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Footer Score & Open in Studio Button */}
+                      <div className="pt-2.5 border-t border-slate-800/80 flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`text-[10px] font-bold px-2 py-0.5 rounded border ${badge.bg} ${badge.border} ${badge.text}`}
+                          >
+                            {badge.label}
+                          </span>
+                          {diff !== 0 && (
+                            <span className="text-[11px] font-bold text-emerald-400">
+                              {diff > 0 ? `+${diff}` : diff} pts
+                            </span>
+                          )}
+                        </div>
+
+                        <button
+                          onClick={() => handleInspectBatchItem(item)}
+                          className="text-xs font-semibold text-indigo-400 hover:text-indigo-300 flex items-center gap-1 cursor-pointer"
+                        >
+                          <Sliders className="w-3 h-3" />
+                          Fine-Tune in Studio
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : (
+        <>
         {/* ================================================================ */}
         {/* CENTER COLUMN (5 COLS): SOFT-PROOFING VIEWER & HISTOGRAM         */}
         {/* ================================================================ */}
@@ -2614,6 +3181,8 @@ export default function App() {
             </div>
           </div>
         </section>
+        </>
+        )}
       </main>
     </div>
   );

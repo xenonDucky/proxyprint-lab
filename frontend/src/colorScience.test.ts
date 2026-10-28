@@ -8,6 +8,7 @@ import {
   sample3DLut,
   optimizePrintAdjustments
 } from './colorScience';
+import { createZipArchive } from './zipBuilder';
 import { PRINTER_PROFILES, simulatePrinterOutput, applyUserAdjustments } from './App';
 
 describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
@@ -105,5 +106,22 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
     // For a dark muddy card on Home Matte paper, the optimizer should lift shadows & boost contrast
     expect(opt.shadowLift).toBeGreaterThan(20);
     expect(opt.gamma).toBeGreaterThanOrEqual(0.95);
+  });
+
+  it('builds a standards-compliant ZIP archive for batch card export', async () => {
+    const file1 = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]); // PNG magic header
+    const file2 = new Uint8Array([1, 2, 3, 4, 5]);
+    const blob = createZipArchive([
+      { filename: '01_abyssal_dragon.png', data: file1 },
+      { filename: '02_aetherstorm_surge.png', data: file2 }
+    ]);
+
+    expect(blob.type).toBe('application/zip');
+    const buf = new Uint8Array(await blob.arrayBuffer());
+    // PK\x03\x04 local header signature
+    expect(buf[0]).toBe(0x50);
+    expect(buf[1]).toBe(0x4b);
+    expect(buf[2]).toBe(0x03);
+    expect(buf[3]).toBe(0x04);
   });
 });

@@ -87,3 +87,23 @@ def test_analyze_and_bottleneck_scoring():
     assert payload["current"]["scores"]["shadow"] >= payload["baseline"]["scores"]["shadow"]
     assert "printerLut3D" in payload
     assert payload["workingImageDataUrl"].startswith("data:image/png;base64,")
+
+
+def test_batch_auto_optimize_and_export_zip():
+    card1 = create_synthetic_test_card(816, 1110, dark_art=True)
+    card2 = create_synthetic_test_card(744, 1039, dark_art=False)
+    res = client.post(
+        "/api/batch-export-zip",
+        files=[
+            ("files", ("dark_dragon.png", card1, "image/png")),
+            ("files", ("bright_relic.png", card2, "image/png")),
+        ],
+        data={
+            "input_mode": "full_card",
+            "card_standard_id": "mpc_bleed",
+            "printer_profile_id": "mpc_commercial",
+        },
+    )
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/zip"
+    assert res.content[:4] == b"PK\x03\x04"
