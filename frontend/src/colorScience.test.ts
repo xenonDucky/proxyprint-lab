@@ -7,6 +7,9 @@ import {
   buildPrinter3DLut,
   sample3DLut,
   applyUnsharpMaskRgba,
+  DPI_BENCHMARKS,
+  computeDpiResolutionScore,
+  computeOptimalRegionSharpening,
   optimizePrintAdjustments
 } from './colorScience';
 import { createZipArchive } from './zipBuilder';
@@ -156,5 +159,31 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
     const textBrightIdx = (15 * W + 10) * 4;
     expect(rgba[textDarkIdx]).toBe(80);
     expect(rgba[textBrightIdx]).toBe(180);
+  });
+
+  it('evaluates Art Box and Card Text Box against 300 Min / 600 Ideal / 1200 Max DPI benchmarks', () => {
+    expect(DPI_BENCHMARKS).toEqual({ min: 300, ideal: 600, max: 1200 });
+
+    // Score benchmarks: 300 DPI -> 75, 600 DPI -> 95, 1200 DPI -> 100
+    expect(computeDpiResolutionScore(300)).toBe(75);
+    expect(computeDpiResolutionScore(600)).toBe(95);
+    expect(computeDpiResolutionScore(1200)).toBe(100);
+    expect(computeDpiResolutionScore(150)).toBeLessThan(75);
+
+    // At >= 600 DPI (ideal), both Art Box and Text Box sharpen should be 0%
+    const idealRegions = computeOptimalRegionSharpening(600, 600);
+    expect(idealRegions.sharpen).toBe(0);
+    expect(idealRegions.textBoxSharpen).toBe(0);
+
+    // At 300 DPI (minimum acceptable), both sliders receive moderate optical sharpening toward 600 DPI ideal
+    const minRegions = computeOptimalRegionSharpening(300, 300);
+    expect(minRegions.sharpen).toBe(32);
+    expect(minRegions.textBoxSharpen).toBe(20);
+
+    // Below 300 DPI (e.g. 210 DPI), both sliders increase while Text Box stays gentler than Art Box
+    const lowRegions = computeOptimalRegionSharpening(210, 210);
+    expect(lowRegions.sharpen).toBeGreaterThan(minRegions.sharpen);
+    expect(lowRegions.textBoxSharpen).toBeGreaterThan(minRegions.textBoxSharpen);
+    expect(lowRegions.textBoxSharpen).toBeLessThan(lowRegions.sharpen);
   });
 });

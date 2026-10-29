@@ -31,6 +31,8 @@ import {
   buildPrinter3DLut,
   sample3DLut,
   applyUnsharpMaskRgba,
+  DPI_BENCHMARKS,
+  computeDpiResolutionScore,
   optimizePrintAdjustments,
   AdjustmentParams
 } from './colorScience';
@@ -829,8 +831,8 @@ export function runFullPrintPipeline({
     (outerBorderDarkRatio > 0.85 && innerRingDarkRatio > 0.72) ||
     (isMpcAspect && effectiveW >= 800 && effectiveH >= 1090 && outerBorderDarkRatio > 0.75);
 
-  const sharpW = Math.min(480, rawW);
-  const sharpH = Math.min(660, rawH);
+  const sharpW = Math.min(960, rawW);
+  const sharpH = Math.min(1320, rawH);
   const sharpCanvas = document.createElement('canvas');
   sharpCanvas.width = sharpW;
   sharpCanvas.height = sharpH;
@@ -844,10 +846,7 @@ export function runFullPrintPipeline({
     gray[i] = 0.299 * sData[p] + 0.587 * sData[p + 1] + 0.114 * sData[p + 2];
   }
 
-  let lapSum = 0;
-  let lapSqSum = 0;
-  let lapCount = 0;
-  // Crop exactly to the unmasked Art Box for Laplacian + 2D FFT sharpness analysis
+  // Crop to the Art Box AND Card Text Box for independent Laplacian + 2D FFT sharpness analysis
   const sharpBleedX = has3mmBleed ? sharpW * (3 / 69) : 0;
   const sharpBleedY = has3mmBleed ? sharpH * (3 / 94) : 0;
   const sharpTrimW = sharpW - sharpBleedX * 2;
@@ -858,6 +857,12 @@ export function runFullPrintPipeline({
   const yStart = Math.max(1, Math.floor(sharpBleedY + sharpTrimH * 0.112));
   const yEnd = Math.min(sharpH - 1, Math.ceil(sharpBleedY + sharpTrimH * 0.547));
 
+  const tyStart = Math.max(1, Math.floor(sharpBleedY + sharpTrimH * 0.556));
+  const tyEnd = Math.min(sharpH - 1, Math.ceil(sharpBleedY + sharpTrimH * 0.895));
+
+  let lapSum = 0;
+  let lapSqSum = 0;
+  let lapCount = 0;
   for (let y = yStart; y < yEnd; y++) {
     for (let x = xStart; x < xEnd; x++) {
       const c = gray[y * sharpW + x];
@@ -875,14 +880,46 @@ export function runFullPrintPipeline({
   const lapMean = lapSum / Math.max(1, lapCount);
   const lapVariance = lapSqSum / Math.max(1, lapCount) - lapMean * lapMean;
 
+  let textLapSum = 0;
+  let textLapSqSum = 0;
+  let textLapCount = 0;
+  for (let y = tyStart; y < tyEnd; y++) {
+    for (let x = xStart; x < xEnd; x++) {
+      const c = gray[y * sharpW + x];
+      const lap =
+        -4 * c +
+        gray[(y - 1) * sharpW + x] +
+        gray[(y + 1) * sharpW + x] +
+        gray[y * sharpW + (x - 1)] +
+        gray[y * sharpW + (x + 1)];
+      textLapSum += lap;
+      textLapSqSum += lap * lap;
+      textLapCount++;
+    }
+  }
+  const textLapMean = textLapSum / Math.max(1, textLapCount);
+  const textLapVariance = textLapSqSum / Math.max(1, textLapCount) - textLapMean * textLapMean;
+
   const lapSharpnessFactor = Math.min(1.0, Math.max(0.38, Math.sqrt(lapVariance) / 19.5));
+  const textLapSharpnessFactor = Math.min(1.0, Math.max(0.38, Math.sqrt(textLapVariance) / 22.0));
   const fftSharpnessFactor = computeFftHighFrequencyFactor(gray, sharpW, sharpH);
   const opticalSharpnessFactor = 0.65 * lapSharpnessFactor + 0.35 * fftSharpnessFactor;
+  const textOpticalSharpnessFactor = 0.72 * textLapSharpnessFactor + 0.28 * fftSharpnessFactor;
 
-  const effectiveOpticalPpi = Math.round(nominalPpi * opticalSharpnessFactor);
+  const clampedNominalPpi = Math.min(DPI_BENCHMARKS.max, nominalPpi);
+  const effectiveOpticalPpi = Math.min(
+    DPI_BENCHMARKS.max,
+    Math.round(clampedNominalPpi * opticalSharpnessFactor)
+  );
+  const textOpticalPpi = Math.min(
+    DPI_BENCHMARKS.max,
+    Math.round(clampedNominalPpi * textOpticalSharpnessFactor)
+  );
   const isLikelyUpscaled = nominalPpi >= 250 && opticalSharpnessFactor < 0.68;
 
-  let resolutionScore = Math.min(100, Math.round((effectiveOpticalPpi / 300) * 95 + 5));
+  const artDpiScore = computeDpiResolutionScore(effectiveOpticalPpi);
+  const textDpiScore = computeDpiResolutionScore(textOpticalPpi);
+  let resolutionScore = Math.round(0.65 * artDpiScore + 0.35 * textDpiScore);
   if (cardStandard.requiresBleed && !has3mmBleed) {
     resolutionScore = Math.max(25, resolutionScore - 22);
   }
@@ -916,9 +953,15 @@ export function runFullPrintPipeline({
     const maskY0 = Math.floor(bleedOffsetY + trimSpanH * 0.112);
     const maskY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.547);
 
-    // Apply Smart MTG Unsharp Mask (restricted to Art Box in 'full_card' mode so rules text & borders are untouched)
+    const textX0 = maskX0;
+    const textX1 = maskX1;
+    const textY0 = Math.floor(bleedOffsetY + trimSpanH * 0.556);
+    const textY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.895);
+
+    // Apply Smart MTG Unsharp Mask independently to Art Box and Card Text Box
     const workPixels = new Uint8ClampedArray(rawPixels);
     const sharpenAmt = adj.sharpen || 0;
+    const textSharpenAmt = adj.textBoxSharpen || 0;
     if (sharpenAmt > 0) {
       applyUnsharpMaskRgba(
         workPixels,
@@ -927,6 +970,14 @@ export function runFullPrintPipeline({
         sharpenAmt,
         inputMode === 'full_card' ? { x0: maskX0, x1: maskX1, y0: maskY0, y1: maskY1 } : null
       );
+    }
+    if (textSharpenAmt > 0) {
+      applyUnsharpMaskRgba(workPixels, AN_W, AN_H, textSharpenAmt, {
+        x0: textX0,
+        x1: textX1,
+        y0: textY0,
+        y1: textY1
+      });
     }
 
     let maskPixelCount = 0;
@@ -1120,11 +1171,24 @@ export function runFullPrintPipeline({
     // ------------------------------------------------------------------------
     // STAGE 6: BOTTLENECK-CAPPED FINAL SUITABILITY SCORE
     // ------------------------------------------------------------------------
-    const sharpenBoost =
+    const effectiveArtPpi = Math.min(
+      DPI_BENCHMARKS.max,
+      Math.round(effectiveOpticalPpi * (1 + (sharpenAmt / 100) * 0.28))
+    );
+    const effectiveTextPpi = Math.min(
+      DPI_BENCHMARKS.max,
+      Math.round(textOpticalPpi * (1 + (textSharpenAmt / 100) * 0.25))
+    );
+    const artBoost =
       sharpenAmt > 0
-        ? Math.round(Math.min(10, (sharpenAmt / 100) * 14 * (resolutionScore < 85 ? 1.0 : 0.4)))
+        ? Math.round(Math.min(10, (sharpenAmt / 100) * 14 * (artDpiScore < 90 ? 1.0 : 0.4)))
         : 0;
-    const effectiveResolutionScore = Math.min(98, resolutionScore + sharpenBoost);
+    const textBoost =
+      textSharpenAmt > 0
+        ? Math.round(Math.min(8, (textSharpenAmt / 100) * 12 * (textDpiScore < 90 ? 1.0 : 0.4)))
+        : 0;
+    const sharpenBoost = Math.round(0.65 * artBoost + 0.35 * textBoost);
+    const effectiveResolutionScore = Math.min(100, resolutionScore + sharpenBoost);
 
     const qWeighted =
       0.20 * effectiveResolutionScore +
@@ -1167,7 +1231,9 @@ export function runFullPrintPipeline({
         meanDeltaE: meanDeltaE.toFixed(1),
         pctHighDeltaE: pctHighDeltaE.toFixed(1),
         avgPatchRms: avgPatchRms.toFixed(1),
-        lowContrastPatches
+        lowContrastPatches,
+        effectiveArtPpi,
+        effectiveTextPpi
       },
       histograms: {
         original: Array.from(histOriginal),
@@ -1186,6 +1252,12 @@ export function runFullPrintPipeline({
               y: maskY0 / AN_H,
               w: (maskX1 - maskX0) / AN_W,
               h: (maskY1 - maskY0) / AN_H
+            },
+            textBoxNorm: {
+              x: textX0 / AN_W,
+              y: textY0 / AN_H,
+              w: (textX1 - textX0) / AN_W,
+              h: (textY1 - textY0) / AN_H
             }
           }
         : null
@@ -1193,7 +1265,7 @@ export function runFullPrintPipeline({
   };
 
   const baselineResult = evaluateColorAndTones(
-    { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0 },
+    { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0, textBoxSharpen: 0 },
     false
   );
   const currentResult = evaluateColorAndTones(adjustments, true);
@@ -1204,8 +1276,10 @@ export function runFullPrintPipeline({
       rawH,
       effectiveW,
       effectiveH,
-      nominalPpi,
+      nominalPpi: clampedNominalPpi,
       effectiveOpticalPpi,
+      textOpticalPpi,
+      dpiBenchmarks: DPI_BENCHMARKS,
       opticalSharpnessFactor: Math.round(opticalSharpnessFactor * 100),
       fftSharpnessRatio: Math.round(fftSharpnessFactor * 100),
       isLikelyUpscaled,
@@ -1275,6 +1349,11 @@ function renderCardToPrintReadyCanvas(
   const ay0 = Math.floor(bleedOffY + trimH * 0.112);
   const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
 
+  const tx0 = ax0;
+  const tx1 = ax1;
+  const ty0 = Math.floor(bleedOffY + trimH * 0.556);
+  const ty1 = Math.ceil(bleedOffY + trimH * 0.895);
+
   if ((adjustments.sharpen || 0) > 0) {
     applyUnsharpMaskRgba(
       d,
@@ -1283,6 +1362,14 @@ function renderCardToPrintReadyCanvas(
       adjustments.sharpen || 0,
       inputMode === 'full_card' ? { x0: ax0, x1: ax1, y0: ay0, y1: ay1 } : null
     );
+  }
+  if ((adjustments.textBoxSharpen || 0) > 0) {
+    applyUnsharpMaskRgba(d, outW, outH, adjustments.textBoxSharpen || 0, {
+      x0: tx0,
+      x1: tx1,
+      y0: ty0,
+      y1: ty1
+    });
   }
 
   for (let y = 0; y < outH; y++) {
@@ -1342,6 +1429,11 @@ function generateBatchThumbnails(
   const ay0 = Math.floor(bleedOffY + trimH * 0.112);
   const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
 
+  const tx0 = ax0;
+  const tx1 = ax1;
+  const ty0 = Math.floor(bleedOffY + trimH * 0.556);
+  const ty1 = Math.ceil(bleedOffY + trimH * 0.895);
+
   if ((adjustments.sharpen || 0) > 0) {
     applyUnsharpMaskRgba(
       d,
@@ -1350,6 +1442,14 @@ function generateBatchThumbnails(
       adjustments.sharpen || 0,
       inputMode === 'full_card' ? { x0: ax0, x1: ax1, y0: ay0, y1: ay1 } : null
     );
+  }
+  if ((adjustments.textBoxSharpen || 0) > 0) {
+    applyUnsharpMaskRgba(d, TW, TH, adjustments.textBoxSharpen || 0, {
+      x0: tx0,
+      x1: tx1,
+      y0: ty0,
+      y1: ty1
+    });
   }
 
   for (let y = 0; y < TH; y++) {
@@ -1403,7 +1503,8 @@ export default function App() {
     brightness: 0,
     contrast: 0,
     saturation: 0,
-    sharpen: 0
+    sharpen: 0,
+    textBoxSharpen: 0
   });
   const [padMpcBleed, setPadMpcBleed] = useState(false);
 
@@ -1444,7 +1545,8 @@ export default function App() {
       brightness: 0,
       contrast: 0,
       saturation: 0,
-      sharpen: 0
+      sharpen: 0,
+      textBoxSharpen: 0
     });
     setPadMpcBleed(false);
   }, [activePresetId]);
@@ -1470,7 +1572,8 @@ export default function App() {
           brightness: 0,
           contrast: 0,
           saturation: 0,
-          sharpen: 0
+          sharpen: 0,
+          textBoxSharpen: 0
         });
         setPadMpcBleed(false);
       };
@@ -1555,6 +1658,18 @@ export default function App() {
         ctx.fillStyle = 'rgba(251, 191, 36, 0.9)';
         ctx.font = 'bold 10px sans-serif';
         ctx.fillText('ART ANALYSIS REGION', ab.x * w + 6, ab.y * h + 13);
+
+        const tb = analysis.current.visualMaps.textBoxNorm;
+        if (tb) {
+          ctx.strokeStyle = 'rgba(167, 139, 250, 0.9)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 3]);
+          ctx.strokeRect(tb.x * w, tb.y * h, tb.w * w, tb.h * h);
+
+          ctx.fillStyle = 'rgba(196, 181, 253, 0.95)';
+          ctx.font = 'bold 9px sans-serif';
+          ctx.fillText('TEXT BOX REGION', tb.x * w + 6, tb.y * h + 12);
+        }
       }
 
       ctx.restore();
@@ -1582,6 +1697,15 @@ export default function App() {
               }
             : null
         );
+      }
+      if ((adjustments.textBoxSharpen || 0) > 0 && vm.textBoxNorm) {
+        const tbNorm = vm.textBoxNorm;
+        applyUnsharpMaskRgba(d, w, h, adjustments.textBoxSharpen || 0, {
+          x0: Math.floor(tbNorm.x * w),
+          x1: Math.ceil((tbNorm.x + tbNorm.w) * w),
+          y0: Math.floor(tbNorm.y * h),
+          y1: Math.ceil((tbNorm.y + tbNorm.h) * h)
+        });
       }
 
       for (let y = 0; y < h; y++) {
@@ -1646,6 +1770,7 @@ export default function App() {
         const imgData = ctx.getImageData(0, 0, CW, CH);
         const d = imgData.data;
         const abNorm = analysis.current.visualMaps!.artBoxNorm;
+        const tbNorm = analysis.current.visualMaps!.textBoxNorm;
         const ax0 = Math.floor(abNorm.x * CW);
         const ax1 = Math.ceil((abNorm.x + abNorm.w) * CW);
         const ay0 = Math.floor(abNorm.y * CH);
@@ -1659,6 +1784,14 @@ export default function App() {
             adjustments.sharpen || 0,
             inputMode === 'full_card' ? { x0: ax0, x1: ax1, y0: ay0, y1: ay1 } : null
           );
+        }
+        if ((adjustments.textBoxSharpen || 0) > 0 && tbNorm) {
+          applyUnsharpMaskRgba(d, CW, CH, adjustments.textBoxSharpen || 0, {
+            x0: Math.floor(tbNorm.x * CW),
+            x1: Math.ceil((tbNorm.x + tbNorm.w) * CW),
+            y0: Math.floor(tbNorm.y * CH),
+            y1: Math.ceil((tbNorm.y + tbNorm.h) * CH)
+          });
         }
 
         for (let y = 0; y < CH; y++) {
@@ -1726,6 +1859,15 @@ export default function App() {
               }
             : null
         );
+      }
+      if ((adjustments.textBoxSharpen || 0) > 0 && vm.textBoxNorm) {
+        const tbNorm = vm.textBoxNorm;
+        applyUnsharpMaskRgba(d, DISP_W, DISP_H, adjustments.textBoxSharpen || 0, {
+          x0: Math.floor(tbNorm.x * DISP_W),
+          x1: Math.ceil((tbNorm.x + tbNorm.w) * DISP_W),
+          y0: Math.floor(tbNorm.y * DISP_H),
+          y1: Math.ceil((tbNorm.y + tbNorm.h) * DISP_H)
+        });
       }
 
       for (let y = 0; y < DISP_H; y++) {
@@ -1815,7 +1957,7 @@ export default function App() {
       setPadMpcBleed(nextPadBleed);
     }
 
-    // Run Coarse-to-Fine Coordinate Pattern Search with Tikhonov Regularization
+    // Run Coarse-to-Fine Coordinate Pattern Search + Dual-Region (Art Box + Text Box) DPI Optimizer
     const optimalParams = optimizePrintAdjustments({
       rawPixels: analysis.rawAnalysisPixels,
       anW: analysis.anW,
@@ -1825,6 +1967,8 @@ export default function App() {
       printerProfile,
       printer3DLut: analysis.printer3DLut,
       resolutionScore: analysis.resolutionScore,
+      artOpticalPpi: analysis.geometry.effectiveOpticalPpi,
+      textOpticalPpi: analysis.geometry.textOpticalPpi,
       applyUserAdjustmentsFn: applyUserAdjustments
     });
 
@@ -1858,7 +2002,15 @@ export default function App() {
         inputMode,
         cardStandard,
         printerProfile,
-        adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0 },
+        adjustments: {
+          shadowLift: 0,
+          gamma: 1.0,
+          brightness: 0,
+          contrast: 0,
+          saturation: 0,
+          sharpen: 0,
+          textBoxSharpen: 0
+        },
         padMpcBleed: false
       })!;
 
@@ -1871,7 +2023,15 @@ export default function App() {
             inputMode,
             cardStandard,
             printerProfile,
-            adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0 },
+            adjustments: {
+              shadowLift: 0,
+              gamma: 1.0,
+              brightness: 0,
+              contrast: 0,
+              saturation: 0,
+              sharpen: 0,
+              textBoxSharpen: 0
+            },
             padMpcBleed: true
           })!
         : initialAnalysis;
@@ -1885,6 +2045,8 @@ export default function App() {
         printerProfile,
         printer3DLut: workingAnalysis.printer3DLut,
         resolutionScore: workingAnalysis.resolutionScore,
+        artOpticalPpi: workingAnalysis.geometry.effectiveOpticalPpi,
+        textOpticalPpi: workingAnalysis.geometry.textOpticalPpi,
         applyUserAdjustmentsFn: applyUserAdjustments
       });
 
@@ -2037,7 +2199,8 @@ export default function App() {
       brightness: item.adjustments.brightness,
       contrast: item.adjustments.contrast,
       saturation: item.adjustments.saturation,
-      sharpen: item.adjustments.sharpen || 0
+      sharpen: item.adjustments.sharpen || 0,
+      textBoxSharpen: item.adjustments.textBoxSharpen || 0
     });
     setStudioMode('single');
   };
@@ -2105,7 +2268,8 @@ export default function App() {
       brightness: 0,
       contrast: 0,
       saturation: 0,
-      sharpen: 0
+      sharpen: 0,
+      textBoxSharpen: 0
     });
     setPadMpcBleed(false);
   };
@@ -2117,6 +2281,7 @@ export default function App() {
     adjustments.contrast !== 0 ||
     adjustments.saturation !== 0 ||
     (adjustments.sharpen || 0) !== 0 ||
+    (adjustments.textBoxSharpen || 0) !== 0 ||
     padMpcBleed;
 
   const getScoreBadgeStyle = (score: number) => {
@@ -2660,8 +2825,8 @@ export default function App() {
                             </div>
                             <div className="text-[10px] text-slate-400 font-mono">
                               {item.geometry.effectiveW}×{item.geometry.effectiveH}px •{' '}
-                              {item.geometry.effectiveOpticalPpi} PPI
-                              {item.padBleed ? ' • +3mm Bleed Added' : ''}
+                              Art {item.geometry.effectiveOpticalPpi} DPI • Text {item.geometry.textOpticalPpi} DPI
+                              {item.padBleed ? ' • +3mm Bleed' : ''}
                             </div>
                           </div>
                           <button
@@ -2718,7 +2883,12 @@ export default function App() {
                           )}
                           {(item.adjustments.sharpen || 0) > 0 && (
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
-                              Sharpen: +{item.adjustments.sharpen}%
+                              Art Sharpen: +{item.adjustments.sharpen}%
+                            </span>
+                          )}
+                          {(item.adjustments.textBoxSharpen || 0) > 0 && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-violet-300">
+                              Text Sharpen: +{item.adjustments.textBoxSharpen}%
                             </span>
                           )}
                         </div>
@@ -2963,10 +3133,16 @@ export default function App() {
                       Safe Margin
                     </span>
                     {inputMode === 'full_card' && (
-                      <span className="flex items-center gap-1">
-                        <span className="w-2.5 h-0.5 bg-amber-400 inline-block" />
-                        Art Analysis Window
-                      </span>
+                      <>
+                        <span className="flex items-center gap-1">
+                          <span className="w-2.5 h-0.5 bg-amber-400 inline-block" />
+                          Art Box Window
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <span className="w-2.5 h-0.5 bg-violet-400 inline-block" />
+                          Card Text Box Window
+                        </span>
+                      </>
                     )}
                   </div>
                 )}
@@ -3235,45 +3411,126 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Slider 6: Smart Sharpen (Unsharp Mask) */}
-              <div className="pt-2 border-t border-slate-800/80">
-                <div className="flex justify-between text-xs mb-1">
-                  <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+              {/* Dual-Region Smart Sharpen (Art Box + Card Text Box) */}
+              <div className="pt-2.5 border-t border-slate-800/80 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                    Smart Sharpen (Unsharp Mask)
-                    <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
-                      {inputMode === 'full_card' ? 'Art Box Only' : 'Whole Card'}
-                    </span>
+                    Dual-Region Smart Sharpen (Unsharp Mask)
                   </span>
-                  <span className="font-mono text-amber-300 font-bold">
-                    +{adjustments.sharpen || 0}%
+                  <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400">
+                    Min {DPI_BENCHMARKS.min} • Ideal {DPI_BENCHMARKS.ideal} • Max {DPI_BENCHMARKS.max} DPI
                   </span>
                 </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="80"
-                  step="1"
-                  value={adjustments.sharpen || 0}
-                  onChange={(e) =>
-                    setAdjustments((prev) => ({
-                      ...prev,
-                      sharpen: Number(e.target.value)
-                    }))
-                  }
-                  className="w-full accent-amber-500 cursor-pointer"
-                />
-                <p className="text-[10px] text-slate-400">
-                  {inputMode === 'full_card'
-                    ? 'Applies 3×3 luminance Unsharp Masking to the Art Box so details pop in print while keeping the Text Box & Borders at 0% (preventing jagged rasterized text).'
-                    : 'Applies 3×3 luminance Unsharp Mask edge enhancement across the entire card.'}
+
+                {/* Slider 6a: Art Box Sharpen */}
+                <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-2.5 space-y-1.5">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                      Art Box Sharpen
+                      <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                        {inputMode === 'full_card' ? 'Art Region' : 'Whole Card'}
+                      </span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                          curMetrics.effectiveArtPpi >= DPI_BENCHMARKS.ideal
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                            : curMetrics.effectiveArtPpi >= DPI_BENCHMARKS.min
+                            ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
+                            : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                        }`}
+                      >
+                        {geom.effectiveOpticalPpi} → {curMetrics.effectiveArtPpi} DPI
+                      </span>
+                      <span className="font-mono text-amber-300 font-bold">
+                        +{adjustments.sharpen || 0}%
+                      </span>
+                    </div>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="80"
+                    step="1"
+                    value={adjustments.sharpen || 0}
+                    onChange={(e) =>
+                      setAdjustments((prev) => ({
+                        ...prev,
+                        sharpen: Number(e.target.value)
+                      }))
+                    }
+                    className="w-full accent-amber-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-400">
+                    <span>
+                      Optical Art Box DPI (Min {DPI_BENCHMARKS.min} / Ideal {DPI_BENCHMARKS.ideal} / Max {DPI_BENCHMARKS.max})
+                    </span>
+                    <span className="font-mono text-slate-300">0% – 80%</span>
+                  </div>
+                </div>
+
+                {/* Slider 6b: Card Text Box Sharpen */}
+                <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-2.5 space-y-1.5">
+                  <div className="flex justify-between items-center text-xs">
+                    <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                      Card Text Box Sharpen
+                      <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30">
+                        Type &amp; Rules Box
+                      </span>
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${
+                          curMetrics.effectiveTextPpi >= DPI_BENCHMARKS.ideal
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                            : curMetrics.effectiveTextPpi >= DPI_BENCHMARKS.min
+                            ? 'bg-indigo-500/15 text-indigo-300 border-indigo-500/30'
+                            : 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                        }`}
+                      >
+                        {geom.textOpticalPpi} → {curMetrics.effectiveTextPpi} DPI
+                      </span>
+                      <span className="font-mono text-violet-300 font-bold">
+                        +{adjustments.textBoxSharpen || 0}%
+                      </span>
+                    </div>
+                  </div>
+                  <input
+                    type="range"
+                    min="0"
+                    max="80"
+                    step="1"
+                    value={adjustments.textBoxSharpen || 0}
+                    onChange={(e) =>
+                      setAdjustments((prev) => ({
+                        ...prev,
+                        textBoxSharpen: Number(e.target.value)
+                      }))
+                    }
+                    className="w-full accent-violet-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-400">
+                    <span>
+                      Optical Text Box DPI (Min {DPI_BENCHMARKS.min} / Ideal {DPI_BENCHMARKS.ideal} / Max {DPI_BENCHMARKS.max})
+                    </span>
+                    <span className="font-mono text-slate-300">0% – 80%</span>
+                  </div>
+                </div>
+
+                <p className="text-[10px] text-slate-400 leading-relaxed">
+                  <span className="text-slate-200 font-semibold">Auto-Optimize for Printer</span> independently measures Optical DPI in both the{' '}
+                  <span className="text-amber-300 font-semibold">Art Box</span> and{' '}
+                  <span className="text-violet-300 font-semibold">Card Text Box</span> against the{' '}
+                  <span className="font-mono text-slate-200">300 Min / 600 Ideal / 1200 Max DPI</span> scale and sets both sliders automatically (using a gentler curve on text to prevent glyph halos).
                 </p>
 
                 {/* Golden Rule of Print Warning for Low-Resolution / Upscaled Artwork */}
                 {(geom.isLikelyUpscaled ||
-                  geom.effectiveOpticalPpi < 240 ||
-                  baseScores.resolution < 78 ||
-                  ((adjustments.sharpen || 0) > 0 && geom.effectiveOpticalPpi < 280)) && (
+                  geom.effectiveOpticalPpi < DPI_BENCHMARKS.min ||
+                  geom.textOpticalPpi < DPI_BENCHMARKS.min ||
+                  baseScores.resolution < 75) && (
                   <div className="mt-2 p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-start gap-2">
                     <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                     <p className="text-[11px] text-amber-200 leading-snug font-medium">
@@ -3377,14 +3634,15 @@ export default function App() {
 
             <div className="space-y-3">
               <StageScoreCard
-                title="Stage 1 & 2: Resolution, FFT Sharpness & Bleed"
+                title="Stage 1 & 2: Resolution, FFT Sharpness & Bleed (300 Min / 600 Ideal / 1200 Max DPI)"
                 weight="20%"
                 score={curScores.resolution}
                 baseScore={baseScores.resolution}
                 metrics={[
                   `Size: ${geom.effectiveW}×${geom.effectiveH}px`,
-                  `Nominal: ${geom.nominalPpi} PPI`,
-                  `Optical: ${geom.effectiveOpticalPpi} PPI`,
+                  `Nominal: ${geom.nominalPpi} DPI`,
+                  `Art DPI: ${geom.effectiveOpticalPpi} → ${curMetrics.effectiveArtPpi} DPI`,
+                  `Text DPI: ${geom.textOpticalPpi} → ${curMetrics.effectiveTextPpi} DPI`,
                   `FFT HF: ${geom.fftSharpnessRatio}%`,
                   `3mm Bleed: ${geom.has3mmBleed ? 'Yes' : 'Missing'}`
                 ]}
@@ -3393,7 +3651,7 @@ export default function App() {
                     ? 'Warning: High pixel count detected, but Laplacian edge gradient & 2D FFT high-frequency energy are low. This image appears upscaled from a low-res source.'
                     : cardStandard.requiresBleed && !geom.has3mmBleed
                     ? 'Missing 3mm bleed margin for commercial cutting. Toggle "Add 3mm MPC Black Bleed Border" above.'
-                    : 'Sharp enough for trading card viewing distance with clean high-frequency edge gradients.'
+                    : `Evaluated against 300 DPI minimum, 600 DPI ideal, and 1200 DPI maximum for both Art Box (${curMetrics.effectiveArtPpi} DPI) and Card Text Box (${curMetrics.effectiveTextPpi} DPI).`
                 }
               />
 

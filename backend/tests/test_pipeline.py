@@ -125,7 +125,23 @@ def test_smart_mtg_sharpening_respects_art_box_only():
     assert res.status_code == 200
     orig_arr = np.array(Image.open(io.BytesIO(card_bytes)).convert("RGB"))
     out_arr = np.array(Image.open(io.BytesIO(res.content)).convert("RGB"))
-    # Text box / bottom border (y = 800..1000) must be 100% untouched in 'full_card' (Art Box Only) mode
+    # Text box / bottom border (y = 800..1000) must be 100% untouched in 'full_card' (Art Box Only) mode when textBoxSharpen == 0
     assert np.array_equal(orig_arr[800:1000, :, :], out_arr[800:1000, :, :])
     # Art Box (y = 200..450, x = 150..650) must have increased edge contrast from Unsharp Masking
     assert not np.array_equal(orig_arr[200:450, 150:650, :], out_arr[200:450, 150:650, :])
+
+
+def test_dual_region_sharpening_and_dpi_benchmarks():
+    from app.pipeline import compute_dpi_resolution_score, compute_optimal_region_sharpening
+
+    assert compute_dpi_resolution_score(300) == 75
+    assert compute_dpi_resolution_score(600) == 95
+    assert compute_dpi_resolution_score(1200) == 100
+
+    ideal = compute_optimal_region_sharpening(600, 600)
+    assert ideal["sharpen"] == 0.0
+    assert ideal["textBoxSharpen"] == 0.0
+
+    min_dpi = compute_optimal_region_sharpening(300, 300)
+    assert min_dpi["sharpen"] == 26.0
+    assert min_dpi["textBoxSharpen"] == 14.0

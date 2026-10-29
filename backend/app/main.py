@@ -132,27 +132,44 @@ async def export_print_ready_png(
             "brightness": 0.0,
             "contrast": 0.0,
             "saturation": 0.0,
+            "sharpen": 0.0,
+            "textBoxSharpen": 0.0,
         }
         if adjustments_json:
             adj.update(json.loads(adjustments_json))
 
+        actual_aspect = out_w / max(1.0, float(out_h))
+        is_mpc_aspect = abs(actual_aspect - (69.0 / 94.0)) < abs(actual_aspect - (63.0 / 88.0))
+        has_bleed = pad_mpc_bleed or is_mpc_aspect
+        bx = out_w * (3.0 / 69.0) if has_bleed else 0.0
+        by = out_h * (3.0 / 94.0) if has_bleed else 0.0
+        tw = out_w - bx * 2.0
+        th = out_h - by * 2.0
+        ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
+        ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
+        ty0, ty1 = int(np.floor(by + th * 0.556)), int(np.ceil(by + th * 0.895))
+
+        text_box_sharpen = float(adj.get("textBoxSharpen", 0.0))
+
         if input_mode == "artwork_only":
             compensated_rgb = apply_user_adjustments(canvas_rgb, adj)
         else:
-            # Detect whether output canvas has 3mm bleed and compute Art Box coordinates
-            actual_aspect = out_w / max(1.0, float(out_h))
-            is_mpc_aspect = abs(actual_aspect - (69.0 / 94.0)) < abs(actual_aspect - (63.0 / 88.0))
-            has_bleed = pad_mpc_bleed or is_mpc_aspect
-            bx = out_w * (3.0 / 69.0) if has_bleed else 0.0
-            by = out_h * (3.0 / 94.0) if has_bleed else 0.0
-            tw = out_w - bx * 2.0
-            th = out_h - by * 2.0
-            ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
-            ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
-
             compensated_rgb = canvas_rgb.copy()
             compensated_rgb[ay0 : ay1 + 1, ax0 : ax1 + 1] = apply_user_adjustments(
                 canvas_rgb[ay0 : ay1 + 1, ax0 : ax1 + 1], adj
+            )
+
+        if text_box_sharpen > 0.0:
+            compensated_rgb[ty0 : ty1 + 1, ax0 : ax1 + 1] = apply_user_adjustments(
+                compensated_rgb[ty0 : ty1 + 1, ax0 : ax1 + 1],
+                {
+                    "sharpen": text_box_sharpen,
+                    "shadowLift": 0.0,
+                    "gamma": 1.0,
+                    "brightness": 0.0,
+                    "contrast": 0.0,
+                    "saturation": 0.0,
+                },
             )
 
         out_pil = Image.fromarray(compensated_rgb)
@@ -236,20 +253,35 @@ async def batch_auto_optimize_and_export_zip(
 
                 canvas_rgb[py : py + inner_h, px : px + inner_w] = inner_rgb
 
+                has_bleed = bool(analysis["geometry"]["has3mmBleed"] or should_pad)
+                bx = out_w * (3.0 / 69.0) if has_bleed else 0.0
+                by = out_h * (3.0 / 94.0) if has_bleed else 0.0
+                tw = out_w - bx * 2.0
+                th = out_h - by * 2.0
+                ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
+                ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
+                ty0, ty1 = int(np.floor(by + th * 0.556)), int(np.ceil(by + th * 0.895))
+
                 if input_mode == "artwork_only":
                     comp_rgb = apply_user_adjustments(canvas_rgb, opt_adj)
                 else:
-                    has_bleed = bool(analysis["geometry"]["has3mmBleed"] or should_pad)
-                    bx = out_w * (3.0 / 69.0) if has_bleed else 0.0
-                    by = out_h * (3.0 / 94.0) if has_bleed else 0.0
-                    tw = out_w - bx * 2.0
-                    th = out_h - by * 2.0
-                    ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
-                    ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
-
                     comp_rgb = canvas_rgb.copy()
                     comp_rgb[ay0 : ay1 + 1, ax0 : ax1 + 1] = apply_user_adjustments(
                         canvas_rgb[ay0 : ay1 + 1, ax0 : ax1 + 1], opt_adj
+                    )
+
+                text_box_sharpen = float(opt_adj.get("textBoxSharpen", 0.0))
+                if text_box_sharpen > 0.0:
+                    comp_rgb[ty0 : ty1 + 1, ax0 : ax1 + 1] = apply_user_adjustments(
+                        comp_rgb[ty0 : ty1 + 1, ax0 : ax1 + 1],
+                        {
+                            "sharpen": text_box_sharpen,
+                            "shadowLift": 0.0,
+                            "gamma": 1.0,
+                            "brightness": 0.0,
+                            "contrast": 0.0,
+                            "saturation": 0.0,
+                        },
                     )
 
                 out_pil = Image.fromarray(comp_rgb)

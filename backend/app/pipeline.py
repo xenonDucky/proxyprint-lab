@@ -25,6 +25,52 @@ from .color_science import (
 )
 
 
+def compute_dpi_resolution_score(effective_ppi: float) -> int:
+    """
+    Evaluate an effective Optical DPI value against the ProxyPrint Lab benchmark scale:
+      - Minimum acceptable print DPI: 300 DPI
+      - Ideal print DPI:              600 DPI
+      - Maximum DPI cap:              1200 DPI
+    """
+    clamped = float(np.clip(effective_ppi, 0.0, 1200.0))
+    if clamped < 300.0:
+        return int(round(15.0 + (clamped / 300.0) * 60.0))
+    if clamped < 600.0:
+        return int(round(75.0 + ((clamped - 300.0) / 300.0) * 20.0))
+    return int(round(95.0 + ((clamped - 600.0) / 600.0) * 5.0))
+
+
+def compute_optimal_region_sharpening(
+    art_optical_ppi: float, text_optical_ppi: float
+) -> Dict[str, float]:
+    """
+    Compute recommended Unsharp Mask slider percentages for both the Art Box (sharpen)
+    and the Card Text Box (textBoxSharpen) from their autodetected Optical DPI values,
+    targeting 300 DPI minimum, 600 DPI ideal, and 1200 DPI maximum.
+    """
+    art_ppi = float(np.clip(art_optical_ppi, 60.0, 1200.0))
+    text_ppi = float(np.clip(text_optical_ppi, 60.0, 1200.0))
+
+    if art_ppi >= 600.0:
+        art_sharpen = 0.0
+    elif art_ppi >= 300.0:
+        art_sharpen = round(((600.0 - art_ppi) / 300.0) * 26.0)
+    else:
+        art_sharpen = round(26.0 + ((300.0 - art_ppi) / 180.0) * 42.0)
+
+    if text_ppi >= 600.0:
+        text_sharpen = 0.0
+    elif text_ppi >= 300.0:
+        text_sharpen = round(((600.0 - text_ppi) / 300.0) * 14.0)
+    else:
+        text_sharpen = round(14.0 + ((300.0 - text_ppi) / 180.0) * 22.0)
+
+    return {
+        "sharpen": float(np.clip(art_sharpen, 0.0, 68.0)),
+        "textBoxSharpen": float(np.clip(text_sharpen, 0.0, 36.0)),
+    }
+
+
 def compute_fft_high_freq_ratio(gray_img: np.ndarray) -> float:
     """
     Compute the 2D Fast Fourier Transform (FFT) high-frequency energy ratio
@@ -94,6 +140,9 @@ def evaluate_color_and_tones(
     mask_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.112))
     mask_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.547))
 
+    text_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.556))
+    text_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.895))
+
     if input_mode == "artwork_only":
         in_art_mask = np.ones((an_h, an_w), dtype=bool)
     else:
@@ -103,15 +152,25 @@ def evaluate_color_and_tones(
     mask_pixel_count = int(np.sum(in_art_mask))
     norm_count = max(1, mask_pixel_count)
 
-    # Apply user adjustments ONLY inside the analyzed region (so in 'full_card' Art-Box mode,
-    # the black card border and text box are untouched and only the Art Analysis Region is changed)
+    # Apply user adjustments to Art Box and optional Text Box Unsharp Masking
+    text_box_sharpen = float(adj.get("textBoxSharpen", 0.0))
     if input_mode == "artwork_only":
         adj_rgb = apply_user_adjustments(work_rgb, adj)
+        if text_box_sharpen > 0.0:
+            adj_rgb[text_y0 : text_y1 + 1, mask_x0 : mask_x1 + 1] = apply_user_adjustments(
+                adj_rgb[text_y0 : text_y1 + 1, mask_x0 : mask_x1 + 1],
+                {"sharpen": text_box_sharpen, "shadowLift": 0.0, "gamma": 1.0, "brightness": 0.0, "contrast": 0.0, "saturation": 0.0},
+            )
     else:
         adj_rgb = work_rgb.copy()
         adj_rgb[mask_y0 : mask_y1 + 1, mask_x0 : mask_x1 + 1] = apply_user_adjustments(
             work_rgb[mask_y0 : mask_y1 + 1, mask_x0 : mask_x1 + 1], adj
         )
+        if text_box_sharpen > 0.0:
+            adj_rgb[text_y0 : text_y1 + 1, mask_x0 : mask_x1 + 1] = apply_user_adjustments(
+                work_rgb[text_y0 : text_y1 + 1, mask_x0 : mask_x1 + 1],
+                {"sharpen": text_box_sharpen, "shadowLift": 0.0, "gamma": 1.0, "brightness": 0.0, "contrast": 0.0, "saturation": 0.0},
+            )
     L_adj, a_adj, b_adj = srgb_to_lab(adj_rgb)
 
     sim_rgb = simulate_printer_output(adj_rgb, printer_profile)
@@ -318,11 +377,13 @@ def optimize_adjustments_coordinate_search(
     input_mode: str,
     printer_profile: Dict[str, Any],
     resolution_score: int,
+    art_optical_ppi: float = 300.0,
+    text_optical_ppi: float = 300.0,
 ) -> Dict[str, float]:
     """
     Coarse-to-Fine Coordinate Pattern Search (Hooke-Jeeves) with Tikhonov Regularization.
-    Evaluates on a stride-4 subsampled 60x82 grid to find the 5D adjustment vector
-    θ = (shadowLift, gamma, brightness, contrast, saturation) that maximizes
+    Evaluates on a stride-4 subsampled 60x82 grid to find the adjustment vector
+    θ = (shadowLift, gamma, brightness, contrast, saturation, sharpen, textBoxSharpen) that maximizes
     Q_final + 0.35 * Q_weighted - λ ||θ - θ_0||^2.
     """
     sub_rgb = work_rgb[1::4, 1::4]
@@ -344,6 +405,8 @@ def optimize_adjustments_coordinate_search(
     p25_l = float(np.percentile(art_L, 25))
     p90_l = float(np.percentile(art_L, 90))
 
+    opt_region_sharpen = compute_optimal_region_sharpening(art_optical_ppi, text_optical_ppi)
+
     def clamp_params(p: Dict[str, float]) -> Dict[str, float]:
         return {
             "shadowLift": float(np.clip(round(p["shadowLift"]), 0, 75)),
@@ -352,6 +415,7 @@ def optimize_adjustments_coordinate_search(
             "contrast": float(np.clip(round(p["contrast"]), -20, 32)),
             "saturation": float(np.clip(round(p["saturation"]), -28, 25)),
             "sharpen": float(np.clip(round(p.get("sharpen", 0.0)), 0, 80)),
+            "textBoxSharpen": float(np.clip(round(p.get("textBoxSharpen", 0.0)), 0, 80)),
         }
 
     def eval_obj(adj: Dict[str, float]) -> float:
@@ -386,10 +450,19 @@ def optimize_adjustments_coordinate_search(
     )
     adaptive_gamma = 1.12 if p25_l < 22.0 else (0.94 if p25_l > 55.0 else 1.04)
     adaptive_contrast = 12.0 if (p90_l - p10_l) < 45.0 else 6.0
-    adaptive_sharpen = 42.0 if resolution_score < 72 else (22.0 if resolution_score < 85 else 0.0)
+    adaptive_sharpen = opt_region_sharpen["sharpen"]
+    adaptive_text_sharpen = opt_region_sharpen["textBoxSharpen"]
 
     seeds = [
-        {"shadowLift": 0.0, "gamma": 1.0, "brightness": 0.0, "contrast": 0.0, "saturation": 0.0, "sharpen": adaptive_sharpen},
+        {
+            "shadowLift": 0.0,
+            "gamma": 1.0,
+            "brightness": 0.0,
+            "contrast": 0.0,
+            "saturation": 0.0,
+            "sharpen": adaptive_sharpen,
+            "textBoxSharpen": adaptive_text_sharpen,
+        },
         clamp_params(
             {
                 "shadowLift": adaptive_lift,
@@ -398,6 +471,7 @@ def optimize_adjustments_coordinate_search(
                 "contrast": adaptive_contrast,
                 "saturation": 0.0,
                 "sharpen": adaptive_sharpen,
+                "textBoxSharpen": adaptive_text_sharpen,
             }
         ),
         clamp_params(
@@ -408,6 +482,7 @@ def optimize_adjustments_coordinate_search(
                 "contrast": 8.0,
                 "saturation": -6.0,
                 "sharpen": adaptive_sharpen,
+                "textBoxSharpen": adaptive_text_sharpen,
             }
         ),
     ]
@@ -500,9 +575,10 @@ def run_full_backend_pipeline(
     work_rgb[pad_y : pad_y + inner_h, pad_x : pad_x + inner_w] = resized_inner
 
     # Stage 1 & 2: Resolution, Bleed Check, Laplacian Edge Variance & 2D FFT Sharpness
+    # Benchmarks: Min = 300 DPI, Ideal = 600 DPI, Max = 1200 DPI
     ppi_x = effective_w / float(card_standard["width_in"])
     ppi_y = effective_h / float(card_standard["height_in"])
-    nominal_ppi = int(round(min(ppi_x, ppi_y)))
+    nominal_ppi = min(1200, int(round(min(ppi_x, ppi_y))))
 
     actual_aspect = effective_w / max(1.0, float(effective_h))
     std_aspect = float(card_standard["aspect_ratio"])
@@ -543,9 +619,9 @@ def run_full_backend_pipeline(
         or (is_mpc_aspect and effective_w >= 800 and effective_h >= 1090 and outer_border_dark_ratio > 0.75)
     )
 
-    # Full/High-Res Laplacian + 2D FFT High-Frequency Sharpness Check aligned with Art Box
-    sharp_w = min(480, raw_w)
-    sharp_h = min(660, raw_h)
+    # Full/High-Res Laplacian + 2D FFT High-Frequency Sharpness Check aligned with Art Box & Text Box
+    sharp_w = min(960, raw_w)
+    sharp_h = min(1320, raw_h)
     sharp_rgb = cv2.resize(raw_rgb, (sharp_w, sharp_h), interpolation=cv2.INTER_AREA)
     gray = (
         0.299 * sharp_rgb[..., 0].astype(np.float32)
@@ -558,6 +634,7 @@ def run_full_backend_pipeline(
     sharp_trim_w = sharp_w - sharp_bleed_x * 2.0
     sharp_trim_h = sharp_h - sharp_bleed_y * 2.0
 
+    # 1. Art Box Region
     x_start = max(0, int(np.floor(sharp_bleed_x + sharp_trim_w * 0.078)))
     x_end = min(sharp_w, int(np.ceil(sharp_bleed_x + sharp_trim_w * 0.922)))
     y_start = max(0, int(np.floor(sharp_bleed_y + sharp_trim_h * 0.112)))
@@ -571,10 +648,26 @@ def run_full_backend_pipeline(
     fft_factor = compute_fft_high_freq_ratio(art_gray)
     optical_sharpness_factor = float(0.65 * lap_factor + 0.35 * fft_factor)
 
-    effective_optical_ppi = int(round(nominal_ppi * optical_sharpness_factor))
+    effective_optical_ppi = min(1200, int(round(nominal_ppi * optical_sharpness_factor)))
     is_likely_upscaled = bool(nominal_ppi >= 250 and optical_sharpness_factor < 0.68)
 
-    resolution_score = int(min(100, round((effective_optical_ppi / 300.0) * 95.0 + 5.0)))
+    # 2. Card Text Box Region (Type Line + Rules Text Box: y 0.556..0.895)
+    ty_start = max(0, int(np.floor(sharp_bleed_y + sharp_trim_h * 0.556)))
+    ty_end = min(sharp_h, int(np.ceil(sharp_bleed_y + sharp_trim_h * 0.895)))
+    text_gray = gray[ty_start:ty_end, x_start:x_end]
+    if text_gray.size > 16:
+        text_lap = cv2.Laplacian(text_gray, cv2.CV_32F, ksize=1)
+        text_lap_var = float(np.var(text_lap))
+        text_lap_factor = float(np.clip(np.sqrt(text_lap_var) / 22.0, 0.38, 1.0))
+        text_fft_factor = compute_fft_high_freq_ratio(text_gray)
+        text_sharpness_factor = float(0.65 * text_lap_factor + 0.35 * text_fft_factor)
+    else:
+        text_sharpness_factor = optical_sharpness_factor
+    text_optical_ppi = min(1200, int(round(nominal_ppi * text_sharpness_factor)))
+
+    art_res_score = compute_dpi_resolution_score(effective_optical_ppi)
+    text_res_score = compute_dpi_resolution_score(text_optical_ppi)
+    resolution_score = int(round(0.65 * art_res_score + 0.35 * text_res_score))
     if card_standard["requires_bleed"] and not has_3mm_bleed:
         resolution_score = max(25, resolution_score - 22)
     if aspect_diff_pct > 3.5:
@@ -586,7 +679,15 @@ def run_full_backend_pipeline(
         input_mode=input_mode,
         printer_profile=printer_profile,
         resolution_score=resolution_score,
-        adj={"shadowLift": 0.0, "gamma": 1.0, "brightness": 0.0, "contrast": 0.0, "saturation": 0.0},
+        adj={
+            "shadowLift": 0.0,
+            "gamma": 1.0,
+            "brightness": 0.0,
+            "contrast": 0.0,
+            "saturation": 0.0,
+            "sharpen": 0.0,
+            "textBoxSharpen": 0.0,
+        },
         build_visual_buffers=False,
     )
 
@@ -615,6 +716,8 @@ def run_full_backend_pipeline(
         input_mode=input_mode,
         printer_profile=printer_profile,
         resolution_score=resolution_score,
+        art_optical_ppi=effective_optical_ppi,
+        text_optical_ppi=text_optical_ppi,
     )
 
     return {
@@ -626,7 +729,9 @@ def run_full_backend_pipeline(
             "effectiveH": effective_h,
             "nominalPpi": nominal_ppi,
             "effectiveOpticalPpi": effective_optical_ppi,
+            "textOpticalPpi": text_optical_ppi,
             "opticalSharpnessFactor": int(round(optical_sharpness_factor * 100)),
+            "textSharpnessFactor": int(round(text_sharpness_factor * 100)),
             "fftSharpnessRatio": int(round(fft_factor * 100)),
             "isLikelyUpscaled": is_likely_upscaled,
             "has3mmBleed": has_3mm_bleed,

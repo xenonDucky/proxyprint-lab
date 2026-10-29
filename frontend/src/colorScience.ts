@@ -377,6 +377,78 @@ export function sample3DLut(
   return out;
 }
 
+export const DPI_BENCHMARKS = {
+  min: 300,
+  ideal: 600,
+  max: 1200
+} as const;
+
+/**
+ * Maps an effective optical PPI to a 0-100 resolution score using the MTG print benchmarks:
+ *   - Minimum acceptable print DPI: 300 DPI (Score = 75)
+ *   - Ideal crisp print DPI:        600 DPI (Score = 95)
+ *   - Maximum benchmark cap:       1200 DPI (Score = 100)
+ */
+export function computeDpiResolutionScore(effectivePpi: number): number {
+  const clamped = Math.max(0, Math.min(DPI_BENCHMARKS.max, effectivePpi));
+  if (clamped < DPI_BENCHMARKS.min) {
+    return Math.round(15 + (clamped / DPI_BENCHMARKS.min) * 60);
+  }
+  if (clamped < DPI_BENCHMARKS.ideal) {
+    return Math.round(
+      75 + ((clamped - DPI_BENCHMARKS.min) / (DPI_BENCHMARKS.ideal - DPI_BENCHMARKS.min)) * 20
+    );
+  }
+  return Math.round(
+    95 + ((clamped - DPI_BENCHMARKS.ideal) / (DPI_BENCHMARKS.max - DPI_BENCHMARKS.ideal)) * 5
+  );
+}
+
+/**
+ * Computes optimal Unsharp Mask percentages for both the Art Box and the Card Text Box
+ * based on each region's detected Optical DPI relative to 300 DPI (min), 600 DPI (ideal),
+ * and 1200 DPI (max).
+ */
+export function computeOptimalRegionSharpening(
+  artOpticalPpi: number,
+  textOpticalPpi: number
+): { sharpen: number; textBoxSharpen: number } {
+  const clampedArt = Math.max(0, Math.min(DPI_BENCHMARKS.max, artOpticalPpi));
+  const clampedText = Math.max(0, Math.min(DPI_BENCHMARKS.max, textOpticalPpi));
+
+  // 1. Art Box Sharpening (target: 600 DPI ideal, 300 DPI minimum)
+  let sharpen = 0;
+  if (clampedArt < DPI_BENCHMARKS.min) {
+    sharpen = Math.min(
+      68,
+      Math.round(34 + ((DPI_BENCHMARKS.min - clampedArt) / 200) * 28)
+    );
+  } else if (clampedArt < DPI_BENCHMARKS.ideal) {
+    sharpen = Math.round(
+      ((DPI_BENCHMARKS.ideal - clampedArt) / (DPI_BENCHMARKS.ideal - DPI_BENCHMARKS.min)) * 32
+    );
+  } else {
+    sharpen = 0;
+  }
+
+  // 2. Card Text Box Sharpening (target: 600 DPI ideal, 300 DPI minimum, gentler cap to avoid glyph halos)
+  let textBoxSharpen = 0;
+  if (clampedText < DPI_BENCHMARKS.min) {
+    textBoxSharpen = Math.min(
+      36,
+      Math.round(20 + ((DPI_BENCHMARKS.min - clampedText) / 200) * 14)
+    );
+  } else if (clampedText < DPI_BENCHMARKS.ideal) {
+    textBoxSharpen = Math.round(
+      ((DPI_BENCHMARKS.ideal - clampedText) / (DPI_BENCHMARKS.ideal - DPI_BENCHMARKS.min)) * 20
+    );
+  } else {
+    textBoxSharpen = 0;
+  }
+
+  return { sharpen, textBoxSharpen };
+}
+
 export interface AdjustmentParams {
   shadowLift: number;
   gamma: number;
@@ -384,6 +456,7 @@ export interface AdjustmentParams {
   contrast: number;
   saturation: number;
   sharpen: number;
+  textBoxSharpen: number;
 }
 
 /**
@@ -467,6 +540,8 @@ export function optimizePrintAdjustments({
   printerProfile,
   printer3DLut,
   resolutionScore,
+  artOpticalPpi,
+  textOpticalPpi,
   applyUserAdjustmentsFn
 }: {
   rawPixels: Uint8ClampedArray;
@@ -477,6 +552,8 @@ export function optimizePrintAdjustments({
   printerProfile: any;
   printer3DLut: Uint8Array;
   resolutionScore: number;
+  artOpticalPpi?: number;
+  textOpticalPpi?: number;
   applyUserAdjustmentsFn: (r: number, g: number, b: number, adj: AdjustmentParams) => [number, number, number];
 }): AdjustmentParams {
   // Decimate 240x330 -> 60x82 (stride 4) for 16x faster objective evaluation
@@ -711,12 +788,17 @@ export function optimizePrintAdjustments({
     brightness: Math.max(-18, Math.min(18, Math.round(p.brightness))),
     contrast: Math.max(-20, Math.min(32, Math.round(p.contrast))),
     saturation: Math.max(-28, Math.min(25, Math.round(p.saturation))),
-    sharpen: Math.max(0, Math.min(80, Math.round(p.sharpen ?? 0)))
+    sharpen: Math.max(0, Math.min(80, Math.round(p.sharpen ?? 0))),
+    textBoxSharpen: Math.max(0, Math.min(80, Math.round(p.textBoxSharpen ?? 0)))
   });
 
-  // Recommend moderate sharpening automatically when optical resolution is soft (< 85)
-  const recommendedSharpen =
-    resolutionScore < 72 ? 42 : resolutionScore < 85 ? 22 : 0;
+  // Compute optimal sharpening for both Art Box and Card Text Box using 300 DPI min / 600 DPI ideal / 1200 DPI max
+  const fallbackPpi = Math.round(((resolutionScore - 15) / 60) * 300);
+  const { sharpen: recommendedSharpen, textBoxSharpen: recommendedTextSharpen } =
+    computeOptimalRegionSharpening(
+      artOpticalPpi ?? fallbackPpi,
+      textOpticalPpi ?? fallbackPpi
+    );
 
   // Histogram-informed warm start seeds (ensures global awareness across dark, neon, and washed-out art)
   const adaptiveLift = Math.max(
@@ -727,14 +809,23 @@ export function optimizePrintAdjustments({
   const adaptiveContrast = p90L - p10L < 45 ? 12 : 6;
 
   const seeds: AdjustmentParams[] = [
-    { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: recommendedSharpen },
+    {
+      shadowLift: 0,
+      gamma: 1.0,
+      brightness: 0,
+      contrast: 0,
+      saturation: 0,
+      sharpen: recommendedSharpen,
+      textBoxSharpen: recommendedTextSharpen
+    },
     clampParams({
       shadowLift: adaptiveLift,
       gamma: adaptiveGamma,
       brightness: 0,
       contrast: adaptiveContrast,
       saturation: 0,
-      sharpen: recommendedSharpen
+      sharpen: recommendedSharpen,
+      textBoxSharpen: recommendedTextSharpen
     }),
     clampParams({
       shadowLift: printerProfile.recommendedToeLift,
@@ -742,7 +833,8 @@ export function optimizePrintAdjustments({
       brightness: 0,
       contrast: 8,
       saturation: -6,
-      sharpen: recommendedSharpen
+      sharpen: recommendedSharpen,
+      textBoxSharpen: recommendedTextSharpen
     }),
     clampParams({
       shadowLift: Math.round(printerProfile.recommendedToeLift * 0.5),
@@ -750,7 +842,8 @@ export function optimizePrintAdjustments({
       brightness: 0,
       contrast: 10,
       saturation: 8,
-      sharpen: recommendedSharpen
+      sharpen: recommendedSharpen,
+      textBoxSharpen: recommendedTextSharpen
     }),
     clampParams({
       shadowLift: 15,
@@ -758,7 +851,8 @@ export function optimizePrintAdjustments({
       brightness: -2,
       contrast: 14,
       saturation: -12,
-      sharpen: recommendedSharpen
+      sharpen: recommendedSharpen,
+      textBoxSharpen: recommendedTextSharpen
     })
   ];
 
@@ -775,9 +869,9 @@ export function optimizePrintAdjustments({
 
   // Coarse-to-Fine Coordinate Pattern Search (3 multi-scale passes)
   const stepSchedule: Array<Record<keyof AdjustmentParams, number>> = [
-    { shadowLift: 12, contrast: 6, gamma: 0.06, saturation: 6, brightness: 4, sharpen: 0 },
-    { shadowLift: 4, contrast: 3, gamma: 0.02, saturation: 3, brightness: 2, sharpen: 0 },
-    { shadowLift: 2, contrast: 1, gamma: 0.01, saturation: 1, brightness: 1, sharpen: 0 }
+    { shadowLift: 12, contrast: 6, gamma: 0.06, saturation: 6, brightness: 4, sharpen: 0, textBoxSharpen: 0 },
+    { shadowLift: 4, contrast: 3, gamma: 0.02, saturation: 3, brightness: 2, sharpen: 0, textBoxSharpen: 0 },
+    { shadowLift: 2, contrast: 1, gamma: 0.01, saturation: 1, brightness: 1, sharpen: 0, textBoxSharpen: 0 }
   ];
 
   const paramKeys: Array<keyof AdjustmentParams> = [
