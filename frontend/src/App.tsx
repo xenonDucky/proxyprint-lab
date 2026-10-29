@@ -1347,6 +1347,8 @@ export default function App() {
 
   // Batch Queue State
   const [batchItems, setBatchItems] = useState<BatchCardItem[]>([]);
+  const [editingBatchItemId, setEditingBatchItemId] = useState<string | null>(null);
+  const [batchSaveFlash, setBatchSaveFlash] = useState(false);
   const [isBatchProcessing, setIsBatchProcessing] = useState(false);
   const [isExportingZip, setIsExportingZip] = useState(false);
   const batchFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1394,6 +1396,7 @@ export default function App() {
     const generated = generatePresetCardCanvas(activePresetId);
     setSourceCanvas(generated);
     setCustomFileName(null);
+    setEditingBatchItemId(null);
     setAdjustments({
       shadowLift: 0,
       gamma: 1.0,
@@ -1417,6 +1420,7 @@ export default function App() {
         ctx.drawImage(img, 0, 0);
         setActivePresetId(null);
         setCustomFileName(file.name);
+        setEditingBatchItemId(null);
         setSourceCanvas(c);
         setAdjustments({
           shadowLift: 0,
@@ -1935,10 +1939,67 @@ export default function App() {
   const handleInspectBatchItem = (item: BatchCardItem) => {
     setActivePresetId(null);
     setCustomFileName(item.fileName);
+    setEditingBatchItemId(item.id);
     setSourceCanvas(item.sourceCanvas);
     setPadMpcBleed(item.padBleed);
     setAdjustments({ ...item.adjustments });
     setStudioMode('single');
+  };
+
+  // Find if the currently loaded card already exists in the Batch Queue
+  const existingBatchMatch = useMemo(() => {
+    if (!sourceCanvas) return null;
+    const currentName = customFileName || (activePresetId ? `${activePresetId}.png` : 'mtg_proxy.png');
+    return (
+      batchItems.find(
+        (b) =>
+          b.id === editingBatchItemId ||
+          b.sourceCanvas === sourceCanvas ||
+          b.fileName === currentName
+      ) || null
+    );
+  }, [batchItems, editingBatchItemId, sourceCanvas, customFileName, activePresetId]);
+
+  // Save current card & parameters to Batch Queue (overwriting if it already exists, or appending if new)
+  const handleSaveCurrentToBatch = () => {
+    if (!sourceCanvas || !analysis) return;
+    const currentName = customFileName || (activePresetId ? `${activePresetId}.png` : 'mtg_proxy.png');
+    const thumbs = generateBatchThumbnails(
+      sourceCanvas,
+      padMpcBleed,
+      analysis.geometry.has3mmBleed,
+      inputMode,
+      adjustments,
+      analysis.printer3DLut
+    );
+
+    const targetId = existingBatchMatch ? existingBatchMatch.id : `${Date.now()}_${currentName}`;
+    const updatedItem: BatchCardItem = {
+      id: targetId,
+      fileName: currentName,
+      sourceCanvas,
+      padBleed: padMpcBleed,
+      adjustments: { ...adjustments },
+      baselineScores: analysis.baseline.scores,
+      optimizedScores: analysis.current.scores,
+      geometry: analysis.geometry,
+      origThumbUrl: thumbs.origThumbUrl,
+      simThumbUrl: thumbs.simThumbUrl
+    };
+
+    setBatchItems((prev) => {
+      const idx = prev.findIndex((b) => b.id === targetId);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = updatedItem;
+        return copy;
+      }
+      return [...prev, updatedItem];
+    });
+
+    setEditingBatchItemId(targetId);
+    setBatchSaveFlash(true);
+    setTimeout(() => setBatchSaveFlash(false), 1800);
   };
 
   const resetAdjustments = () => {
@@ -2115,6 +2176,34 @@ export default function App() {
                 >
                   <Sparkles className="w-4 h-4" />
                   Auto-Optimize for Printer
+                </button>
+
+                <button
+                  onClick={handleSaveCurrentToBatch}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl border text-xs font-semibold transition cursor-pointer ${
+                    batchSaveFlash
+                      ? 'bg-emerald-500/25 text-emerald-200 border-emerald-400 shadow-lg shadow-emerald-500/20'
+                      : existingBatchMatch
+                      ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border-amber-500/40'
+                      : 'bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-200 border-indigo-500/40'
+                  }`}
+                >
+                  {batchSaveFlash ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      Saved to Batch!
+                    </>
+                  ) : existingBatchMatch ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-amber-400" />
+                      Update in Batch
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-4 h-4 text-indigo-400" />
+                      Save to Batch
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -3063,6 +3152,49 @@ export default function App() {
                 >
                   {padMpcBleed ? 'Added (+3mm)' : 'Off'}
                 </button>
+              </div>
+
+              {/* Save / Overwrite Card in Batch Queue Action */}
+              <div className="pt-2 border-t border-slate-800 flex items-center gap-2">
+                <button
+                  onClick={handleSaveCurrentToBatch}
+                  className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold border flex items-center justify-center gap-2 transition cursor-pointer ${
+                    batchSaveFlash
+                      ? 'bg-emerald-500/25 text-emerald-200 border-emerald-400 shadow-lg shadow-emerald-500/20'
+                      : existingBatchMatch
+                      ? 'bg-amber-500/15 hover:bg-amber-500/25 text-amber-200 border-amber-500/40'
+                      : 'bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-200 border-indigo-500/40'
+                  }`}
+                >
+                  {batchSaveFlash ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                      {existingBatchMatch ? 'Updated Parameters in Batch!' : 'Saved to Batch Queue!'}
+                    </>
+                  ) : existingBatchMatch ? (
+                    <>
+                      <CheckCircle2 className="w-4 h-4 text-amber-400" />
+                      Save &amp; Overwrite in Batch ({existingBatchMatch.fileName})
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-4 h-4 text-indigo-400" />
+                      Save Card to Batch Queue
+                    </>
+                  )}
+                </button>
+
+                {existingBatchMatch && (
+                  <button
+                    onClick={() => {
+                      handleSaveCurrentToBatch();
+                      setStudioMode('batch');
+                    }}
+                    className="py-2 px-3 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow transition cursor-pointer whitespace-nowrap"
+                  >
+                    Save &amp; Return to Batch
+                  </button>
+                )}
               </div>
             </div>
           </div>
