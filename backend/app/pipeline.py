@@ -105,12 +105,13 @@ def evaluate_color_and_tones(
 
     # Apply user adjustments ONLY inside the analyzed region (so in 'full_card' Art-Box mode,
     # the black card border and text box are untouched and only the Art Analysis Region is changed)
-    adj_full = apply_user_adjustments(work_rgb, adj)
     if input_mode == "artwork_only":
-        adj_rgb = adj_full
+        adj_rgb = apply_user_adjustments(work_rgb, adj)
     else:
         adj_rgb = work_rgb.copy()
-        adj_rgb[in_art_mask] = adj_full[in_art_mask]
+        adj_rgb[mask_y0 : mask_y1 + 1, mask_x0 : mask_x1 + 1] = apply_user_adjustments(
+            work_rgb[mask_y0 : mask_y1 + 1, mask_x0 : mask_x1 + 1], adj
+        )
     L_adj, a_adj, b_adj = srgb_to_lab(adj_rgb)
 
     sim_rgb = simulate_printer_output(adj_rgb, printer_profile)
@@ -350,6 +351,7 @@ def optimize_adjustments_coordinate_search(
             "brightness": float(np.clip(round(p["brightness"]), -18, 18)),
             "contrast": float(np.clip(round(p["contrast"]), -20, 32)),
             "saturation": float(np.clip(round(p["saturation"]), -28, 25)),
+            "sharpen": float(np.clip(round(p.get("sharpen", 0.0)), 0, 80)),
         }
 
     def eval_obj(adj: Dict[str, float]) -> float:
@@ -384,9 +386,10 @@ def optimize_adjustments_coordinate_search(
     )
     adaptive_gamma = 1.12 if p25_l < 22.0 else (0.94 if p25_l > 55.0 else 1.04)
     adaptive_contrast = 12.0 if (p90_l - p10_l) < 45.0 else 6.0
+    adaptive_sharpen = 42.0 if resolution_score < 72 else (22.0 if resolution_score < 85 else 0.0)
 
     seeds = [
-        {"shadowLift": 0.0, "gamma": 1.0, "brightness": 0.0, "contrast": 0.0, "saturation": 0.0},
+        {"shadowLift": 0.0, "gamma": 1.0, "brightness": 0.0, "contrast": 0.0, "saturation": 0.0, "sharpen": adaptive_sharpen},
         clamp_params(
             {
                 "shadowLift": adaptive_lift,
@@ -394,6 +397,7 @@ def optimize_adjustments_coordinate_search(
                 "brightness": 0.0,
                 "contrast": adaptive_contrast,
                 "saturation": 0.0,
+                "sharpen": adaptive_sharpen,
             }
         ),
         clamp_params(
@@ -403,6 +407,7 @@ def optimize_adjustments_coordinate_search(
                 "brightness": 0.0,
                 "contrast": 8.0,
                 "saturation": -6.0,
+                "sharpen": adaptive_sharpen,
             }
         ),
     ]

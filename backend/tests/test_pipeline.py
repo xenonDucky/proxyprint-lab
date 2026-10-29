@@ -107,3 +107,25 @@ def test_batch_auto_optimize_and_export_zip():
     assert res.status_code == 200
     assert res.headers["content-type"] == "application/zip"
     assert res.content[:4] == b"PK\x03\x04"
+
+
+def test_smart_mtg_sharpening_respects_art_box_only():
+    card_bytes = create_synthetic_test_card(816, 1110, dark_art=False)
+    res = client.post(
+        "/api/export",
+        files={"file": ("bright_relic.png", card_bytes, "image/png")},
+        data={
+            "input_mode": "full_card",
+            "pad_mpc_bleed": "false",
+            "adjustments_json": json.dumps(
+                {"shadowLift": 0, "gamma": 1.0, "brightness": 0, "contrast": 0, "saturation": 0, "sharpen": 60}
+            ),
+        },
+    )
+    assert res.status_code == 200
+    orig_arr = np.array(Image.open(io.BytesIO(card_bytes)).convert("RGB"))
+    out_arr = np.array(Image.open(io.BytesIO(res.content)).convert("RGB"))
+    # Text box / bottom border (y = 800..1000) must be 100% untouched in 'full_card' (Art Box Only) mode
+    assert np.array_equal(orig_arr[800:1000, :, :], out_arr[800:1000, :, :])
+    # Art Box (y = 200..450, x = 150..650) must have increased edge contrast from Unsharp Masking
+    assert not np.array_equal(orig_arr[200:450, 150:650, :], out_arr[200:450, 150:650, :])

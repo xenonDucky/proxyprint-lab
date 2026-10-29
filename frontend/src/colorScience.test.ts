@@ -6,6 +6,7 @@ import {
   computeFftHighFrequencyFactor,
   buildPrinter3DLut,
   sample3DLut,
+  applyUnsharpMaskRgba,
   optimizePrintAdjustments
 } from './colorScience';
 import { createZipArchive } from './zipBuilder';
@@ -123,5 +124,37 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
     expect(buf[1]).toBe(0x4b);
     expect(buf[2]).toBe(0x03);
     expect(buf[3]).toBe(0x04);
+  });
+
+  it('applies Smart MTG Unsharp Mask inside the Art Box while keeping Text Box & Borders untouched', () => {
+    const W = 20;
+    const H = 20;
+    const rgba = new Uint8ClampedArray(W * H * 4);
+    // Create a high-contrast vertical edge at x = 10 across the whole image
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < W; x++) {
+        const idx = (y * W + x) * 4;
+        const val = x < 10 ? 80 : 180;
+        rgba[idx] = val;
+        rgba[idx + 1] = val;
+        rgba[idx + 2] = val;
+        rgba[idx + 3] = 255;
+      }
+    }
+
+    // Art Box is y: 2..10, x: 2..18; Text Box is y: 12..18
+    applyUnsharpMaskRgba(rgba, W, H, 60, { x0: 2, x1: 18, y0: 2, y1: 10 });
+
+    // Inside Art Box (y = 5): dark side of edge (x = 9) becomes darker (< 80), bright side (x = 10) becomes brighter (> 180)
+    const artDarkIdx = (5 * W + 9) * 4;
+    const artBrightIdx = (5 * W + 10) * 4;
+    expect(rgba[artDarkIdx]).toBeLessThan(80);
+    expect(rgba[artBrightIdx]).toBeGreaterThan(180);
+
+    // Inside Text Box (y = 15): edge pixels remain 100% untouched (80 and 180)
+    const textDarkIdx = (15 * W + 9) * 4;
+    const textBrightIdx = (15 * W + 10) * 4;
+    expect(rgba[textDarkIdx]).toBe(80);
+    expect(rgba[textBrightIdx]).toBe(180);
   });
 });

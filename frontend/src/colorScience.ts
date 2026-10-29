@@ -383,6 +383,70 @@ export interface AdjustmentParams {
   brightness: number;
   contrast: number;
   saturation: number;
+  sharpen: number;
+}
+
+/**
+ * Applies a 3x3 Luminance Unsharp Mask (USM) convolution across an RGBA image buffer.
+ * - Preserves hue/chroma by computing the high-pass Laplacian detail strictly on luminance.
+ * - Smart Region Awareness for MTG Cards:
+ *   When `artBoxOnly` is true (or inside the Art Box), applies 100% of `sharpenAmount`
+ *   to the illustration, and 0% to the text box & black borders so rasterized rules text
+ *   never becomes jagged or crunchy.
+ */
+export function applyUnsharpMaskRgba(
+  rgba: Uint8ClampedArray,
+  width: number,
+  height: number,
+  sharpenAmount: number,
+  artBoxBounds?: { x0: number; x1: number; y0: number; y1: number } | null
+): void {
+  if (!sharpenAmount || sharpenAmount <= 0) return;
+
+  const strength = (sharpenAmount / 100) * 1.45;
+  const srcCopy = new Uint8ClampedArray(rgba);
+
+  const yStart = artBoxBounds ? Math.max(1, artBoxBounds.y0) : 1;
+  const yEnd = artBoxBounds ? Math.min(height - 2, artBoxBounds.y1) : height - 2;
+  const xStart = artBoxBounds ? Math.max(1, artBoxBounds.x0) : 1;
+  const xEnd = artBoxBounds ? Math.min(width - 2, artBoxBounds.x1) : width - 2;
+
+  const stride = width * 4;
+
+  for (let y = yStart; y <= yEnd; y++) {
+    const rowOff = y * stride;
+    for (let x = xStart; x <= xEnd; x++) {
+      const p = rowOff + x * 4;
+
+      const rC = srcCopy[p];
+      const gC = srcCopy[p + 1];
+      const bC = srcCopy[p + 2];
+      const lumC = 0.299 * rC + 0.587 * gC + 0.114 * bC;
+
+      const pUp = p - stride;
+      const pDown = p + stride;
+      const pLeft = p - 4;
+      const pRight = p + 4;
+
+      const lumUp = 0.299 * srcCopy[pUp] + 0.587 * srcCopy[pUp + 1] + 0.114 * srcCopy[pUp + 2];
+      const lumDown =
+        0.299 * srcCopy[pDown] + 0.587 * srcCopy[pDown + 1] + 0.114 * srcCopy[pDown + 2];
+      const lumLeft =
+        0.299 * srcCopy[pLeft] + 0.587 * srcCopy[pLeft + 1] + 0.114 * srcCopy[pLeft + 2];
+      const lumRight =
+        0.299 * srcCopy[pRight] + 0.587 * srcCopy[pRight + 1] + 0.114 * srcCopy[pRight + 2];
+
+      const highPass = 4 * lumC - (lumUp + lumDown + lumLeft + lumRight);
+
+      // Soft noise gate: ignore tiny compression noise (< 1.5 luma diff) so JPEG artifacts aren't amplified
+      if (Math.abs(highPass) > 1.5) {
+        const delta = highPass * 0.25 * strength;
+        rgba[p] = Math.max(0, Math.min(255, Math.round(rC + delta)));
+        rgba[p + 1] = Math.max(0, Math.min(255, Math.round(gC + delta)));
+        rgba[p + 2] = Math.max(0, Math.min(255, Math.round(bC + delta)));
+      }
+    }
+  }
 }
 
 /**
@@ -646,8 +710,13 @@ export function optimizePrintAdjustments({
     gamma: Math.max(0.82, Math.min(1.38, Math.round(p.gamma * 100) / 100)),
     brightness: Math.max(-18, Math.min(18, Math.round(p.brightness))),
     contrast: Math.max(-20, Math.min(32, Math.round(p.contrast))),
-    saturation: Math.max(-28, Math.min(25, Math.round(p.saturation)))
+    saturation: Math.max(-28, Math.min(25, Math.round(p.saturation))),
+    sharpen: Math.max(0, Math.min(80, Math.round(p.sharpen ?? 0)))
   });
+
+  // Recommend moderate sharpening automatically when optical resolution is soft (< 85)
+  const recommendedSharpen =
+    resolutionScore < 72 ? 42 : resolutionScore < 85 ? 22 : 0;
 
   // Histogram-informed warm start seeds (ensures global awareness across dark, neon, and washed-out art)
   const adaptiveLift = Math.max(
@@ -658,34 +727,38 @@ export function optimizePrintAdjustments({
   const adaptiveContrast = p90L - p10L < 45 ? 12 : 6;
 
   const seeds: AdjustmentParams[] = [
-    { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0 },
+    { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: recommendedSharpen },
     clampParams({
       shadowLift: adaptiveLift,
       gamma: adaptiveGamma,
       brightness: 0,
       contrast: adaptiveContrast,
-      saturation: 0
+      saturation: 0,
+      sharpen: recommendedSharpen
     }),
     clampParams({
       shadowLift: printerProfile.recommendedToeLift,
       gamma: 1.08,
       brightness: 0,
       contrast: 8,
-      saturation: -6
+      saturation: -6,
+      sharpen: recommendedSharpen
     }),
     clampParams({
       shadowLift: Math.round(printerProfile.recommendedToeLift * 0.5),
       gamma: 1.02,
       brightness: 0,
       contrast: 10,
-      saturation: 8
+      saturation: 8,
+      sharpen: recommendedSharpen
     }),
     clampParams({
       shadowLift: 15,
       gamma: 0.96,
       brightness: -2,
       contrast: 14,
-      saturation: -12
+      saturation: -12,
+      sharpen: recommendedSharpen
     })
   ];
 
@@ -702,9 +775,9 @@ export function optimizePrintAdjustments({
 
   // Coarse-to-Fine Coordinate Pattern Search (3 multi-scale passes)
   const stepSchedule: Array<Record<keyof AdjustmentParams, number>> = [
-    { shadowLift: 12, contrast: 6, gamma: 0.06, saturation: 6, brightness: 4 },
-    { shadowLift: 4, contrast: 3, gamma: 0.02, saturation: 3, brightness: 2 },
-    { shadowLift: 2, contrast: 1, gamma: 0.01, saturation: 1, brightness: 1 }
+    { shadowLift: 12, contrast: 6, gamma: 0.06, saturation: 6, brightness: 4, sharpen: 0 },
+    { shadowLift: 4, contrast: 3, gamma: 0.02, saturation: 3, brightness: 2, sharpen: 0 },
+    { shadowLift: 2, contrast: 1, gamma: 0.01, saturation: 1, brightness: 1, sharpen: 0 }
   ];
 
   const paramKeys: Array<keyof AdjustmentParams> = [

@@ -4,6 +4,7 @@ and 3D Look-Up Table (LUT) Generation for ProxyPrint Lab.
 """
 
 from typing import Dict, Any, Tuple
+import cv2
 import numpy as np
 
 
@@ -129,12 +130,24 @@ def delta_e_cie2000(
 
 def apply_user_adjustments(rgb_uint8: np.ndarray, adj: Dict[str, float]) -> np.ndarray:
     """
-    Apply user pre-press adjustments (Shadow Recovery Toe Lift, Gamma, Brightness,
-    Contrast, Saturation) to an (..., 3) uint8 RGB image array.
+    Apply user pre-press adjustments (Smart Unsharp Mask, Shadow Recovery Toe Lift,
+    Gamma, Brightness, Contrast, Saturation) to an (..., 3) uint8 RGB image array.
     """
-    rf = rgb_uint8[..., 0].astype(np.float32) / 255.0
-    gf = rgb_uint8[..., 1].astype(np.float32) / 255.0
-    bf = rgb_uint8[..., 2].astype(np.float32) / 255.0
+    sharpen = float(adj.get("sharpen", 0.0))
+    working = rgb_uint8.astype(np.float32)
+
+    # 0. Luminance-preserving 3x3 Unsharp Mask with soft noise threshold
+    if sharpen > 0.0 and working.ndim == 3 and working.shape[0] >= 3 and working.shape[1] >= 3:
+        strength = (sharpen / 100.0) * 1.45
+        luma_255 = 0.299 * working[..., 0] + 0.587 * working[..., 1] + 0.114 * working[..., 2]
+        blur_luma = cv2.GaussianBlur(luma_255, (3, 3), 0)
+        high_pass = luma_255 - blur_luma
+        delta = np.where(np.abs(high_pass) > 1.5, high_pass * strength, 0.0)
+        working = np.clip(working + delta[..., np.newaxis], 0.0, 255.0)
+
+    rf = working[..., 0] / 255.0
+    gf = working[..., 1] / 255.0
+    bf = working[..., 2] / 255.0
 
     shadow_lift = float(adj.get("shadowLift", 0.0))
     gamma = float(adj.get("gamma", 1.0))

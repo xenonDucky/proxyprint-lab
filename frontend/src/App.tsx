@@ -30,6 +30,7 @@ import {
   computeFftHighFrequencyFactor,
   buildPrinter3DLut,
   sample3DLut,
+  applyUnsharpMaskRgba,
   optimizePrintAdjustments,
   AdjustmentParams
 } from './colorScience';
@@ -915,6 +916,19 @@ export function runFullPrintPipeline({
     const maskY0 = Math.floor(bleedOffsetY + trimSpanH * 0.112);
     const maskY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.547);
 
+    // Apply Smart MTG Unsharp Mask (restricted to Art Box in 'full_card' mode so rules text & borders are untouched)
+    const workPixels = new Uint8ClampedArray(rawPixels);
+    const sharpenAmt = adj.sharpen || 0;
+    if (sharpenAmt > 0) {
+      applyUnsharpMaskRgba(
+        workPixels,
+        AN_W,
+        AN_H,
+        sharpenAmt,
+        inputMode === 'full_card' ? { x0: maskX0, x1: maskX1, y0: maskY0, y1: maskY1 } : null
+      );
+    }
+
     let maskPixelCount = 0;
     let lUnder5 = 0;
     let lUnder10 = 0;
@@ -941,8 +955,8 @@ export function runFullPrintPipeline({
         // Only apply user adjustments inside the analyzed region (so in 'full_card' Art-Box mode,
         // the black card border and text box are untouched and only the Art Analysis Region is changed)
         const [ar, ag, ab] = isAnalyzed
-          ? applyUserAdjustments(rawPixels[p], rawPixels[p + 1], rawPixels[p + 2], adj)
-          : [rawPixels[p], rawPixels[p + 1], rawPixels[p + 2]];
+          ? applyUserAdjustments(workPixels[p], workPixels[p + 1], workPixels[p + 2], adj)
+          : [workPixels[p], workPixels[p + 1], workPixels[p + 2]];
         const [L_adj, a_adj, b_adj] = rgbToLab(ar, ag, ab);
         adjustedL[idx] = L_adj;
 
@@ -1106,14 +1120,20 @@ export function runFullPrintPipeline({
     // ------------------------------------------------------------------------
     // STAGE 6: BOTTLENECK-CAPPED FINAL SUITABILITY SCORE
     // ------------------------------------------------------------------------
+    const sharpenBoost =
+      sharpenAmt > 0
+        ? Math.round(Math.min(10, (sharpenAmt / 100) * 14 * (resolutionScore < 85 ? 1.0 : 0.4)))
+        : 0;
+    const effectiveResolutionScore = Math.min(98, resolutionScore + sharpenBoost);
+
     const qWeighted =
-      0.20 * resolutionScore +
+      0.20 * effectiveResolutionScore +
       0.35 * shadowScore +
       0.10 * highlightScore +
       0.15 * contrastScore +
       0.20 * colorScore;
 
-    const minCritical = Math.min(resolutionScore, shadowScore, contrastScore);
+    const minCritical = Math.min(effectiveResolutionScore, shadowScore, contrastScore);
     const qFinal = Math.round(Math.min(qWeighted, minCritical + 15));
     const isBottleneckCapped = minCritical + 15 < qWeighted - 0.5;
 
@@ -1125,10 +1145,10 @@ export function runFullPrintPipeline({
         bottleneckMetric:
           minCritical === shadowScore
             ? 'Shadow Detail'
-            : minCritical === resolutionScore
+            : minCritical === effectiveResolutionScore
             ? 'Resolution'
             : 'Contrast',
-        resolution: resolutionScore,
+        resolution: effectiveResolutionScore,
         shadow: shadowScore,
         highlight: highlightScore,
         contrast: contrastScore,
@@ -1173,7 +1193,7 @@ export function runFullPrintPipeline({
   };
 
   const baselineResult = evaluateColorAndTones(
-    { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0 },
+    { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0 },
     false
   );
   const currentResult = evaluateColorAndTones(adjustments, true);
@@ -1255,6 +1275,16 @@ function renderCardToPrintReadyCanvas(
   const ay0 = Math.floor(bleedOffY + trimH * 0.112);
   const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
 
+  if ((adjustments.sharpen || 0) > 0) {
+    applyUnsharpMaskRgba(
+      d,
+      outW,
+      outH,
+      adjustments.sharpen || 0,
+      inputMode === 'full_card' ? { x0: ax0, x1: ax1, y0: ay0, y1: ay1 } : null
+    );
+  }
+
   for (let y = 0; y < outH; y++) {
     for (let x = 0; x < outW; x++) {
       const i = (y * outW + x) * 4;
@@ -1312,6 +1342,16 @@ function generateBatchThumbnails(
   const ay0 = Math.floor(bleedOffY + trimH * 0.112);
   const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
 
+  if ((adjustments.sharpen || 0) > 0) {
+    applyUnsharpMaskRgba(
+      d,
+      TW,
+      TH,
+      adjustments.sharpen || 0,
+      inputMode === 'full_card' ? { x0: ax0, x1: ax1, y0: ay0, y1: ay1 } : null
+    );
+  }
+
   for (let y = 0; y < TH; y++) {
     for (let x = 0; x < TW; x++) {
       const i = (y * TW + x) * 4;
@@ -1362,7 +1402,8 @@ export default function App() {
     gamma: 1.0,
     brightness: 0,
     contrast: 0,
-    saturation: 0
+    saturation: 0,
+    sharpen: 0
   });
   const [padMpcBleed, setPadMpcBleed] = useState(false);
 
@@ -1402,7 +1443,8 @@ export default function App() {
       gamma: 1.0,
       brightness: 0,
       contrast: 0,
-      saturation: 0
+      saturation: 0,
+      sharpen: 0
     });
     setPadMpcBleed(false);
   }, [activePresetId]);
@@ -1427,7 +1469,8 @@ export default function App() {
           gamma: 1.0,
           brightness: 0,
           contrast: 0,
-          saturation: 0
+          saturation: 0,
+          sharpen: 0
         });
         setPadMpcBleed(false);
       };
@@ -1523,6 +1566,24 @@ export default function App() {
       const d = imgData.data;
       const vm = analysis.current.visualMaps!;
 
+      if ((adjustments.sharpen || 0) > 0) {
+        const abNorm = vm.artBoxNorm;
+        applyUnsharpMaskRgba(
+          d,
+          w,
+          h,
+          adjustments.sharpen || 0,
+          inputMode === 'full_card'
+            ? {
+                x0: Math.floor(abNorm.x * w),
+                x1: Math.ceil((abNorm.x + abNorm.w) * w),
+                y0: Math.floor(abNorm.y * h),
+                y1: Math.ceil((abNorm.y + abNorm.h) * h)
+              }
+            : null
+        );
+      }
+
       for (let y = 0; y < h; y++) {
         const mapY = Math.min(vm.anH - 1, Math.floor((y / h) * vm.anH));
         for (let x = 0; x < w; x++) {
@@ -1575,7 +1636,7 @@ export default function App() {
         drawGuidesOverlay(ctx, CW, CH);
       }
 
-      // 2. Simulated Print (with Current User Adjustments + 3D LUT)
+      // 2. Simulated Print (with Current User Adjustments + Smart Sharpen + 3D LUT)
       if (simCompareCanvasRef.current) {
         const c = simCompareCanvasRef.current;
         c.width = CW;
@@ -1589,6 +1650,16 @@ export default function App() {
         const ax1 = Math.ceil((abNorm.x + abNorm.w) * CW);
         const ay0 = Math.floor(abNorm.y * CH);
         const ay1 = Math.ceil((abNorm.y + abNorm.h) * CH);
+
+        if ((adjustments.sharpen || 0) > 0) {
+          applyUnsharpMaskRgba(
+            d,
+            CW,
+            CH,
+            adjustments.sharpen || 0,
+            inputMode === 'full_card' ? { x0: ax0, x1: ax1, y0: ay0, y1: ay1 } : null
+          );
+        }
 
         for (let y = 0; y < CH; y++) {
           for (let x = 0; x < CW; x++) {
@@ -1638,6 +1709,24 @@ export default function App() {
       const imgData = ctx.getImageData(0, 0, DISP_W, DISP_H);
       const d = imgData.data;
       const vm = analysis.current.visualMaps!;
+
+      if ((adjustments.sharpen || 0) > 0) {
+        const abNorm = vm.artBoxNorm;
+        applyUnsharpMaskRgba(
+          d,
+          DISP_W,
+          DISP_H,
+          adjustments.sharpen || 0,
+          inputMode === 'full_card'
+            ? {
+                x0: Math.floor(abNorm.x * DISP_W),
+                x1: Math.ceil((abNorm.x + abNorm.w) * DISP_W),
+                y0: Math.floor(abNorm.y * DISP_H),
+                y1: Math.ceil((abNorm.y + abNorm.h) * DISP_H)
+              }
+            : null
+        );
+      }
 
       for (let y = 0; y < DISP_H; y++) {
         const mapY = Math.min(vm.anH - 1, Math.floor((y / DISP_H) * vm.anH));
@@ -1769,7 +1858,7 @@ export default function App() {
         inputMode,
         cardStandard,
         printerProfile,
-        adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0 },
+        adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0 },
         padMpcBleed: false
       })!;
 
@@ -1782,7 +1871,7 @@ export default function App() {
             inputMode,
             cardStandard,
             printerProfile,
-            adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0 },
+            adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0 },
             padMpcBleed: true
           })!
         : initialAnalysis;
@@ -1942,7 +2031,14 @@ export default function App() {
     setEditingBatchItemId(item.id);
     setSourceCanvas(item.sourceCanvas);
     setPadMpcBleed(item.padBleed);
-    setAdjustments({ ...item.adjustments });
+    setAdjustments({
+      shadowLift: item.adjustments.shadowLift,
+      gamma: item.adjustments.gamma,
+      brightness: item.adjustments.brightness,
+      contrast: item.adjustments.contrast,
+      saturation: item.adjustments.saturation,
+      sharpen: item.adjustments.sharpen || 0
+    });
     setStudioMode('single');
   };
 
@@ -2008,7 +2104,8 @@ export default function App() {
       gamma: 1.0,
       brightness: 0,
       contrast: 0,
-      saturation: 0
+      saturation: 0,
+      sharpen: 0
     });
     setPadMpcBleed(false);
   };
@@ -2019,6 +2116,7 @@ export default function App() {
     adjustments.brightness !== 0 ||
     adjustments.contrast !== 0 ||
     adjustments.saturation !== 0 ||
+    (adjustments.sharpen || 0) !== 0 ||
     padMpcBleed;
 
   const getScoreBadgeStyle = (score: number) => {
@@ -2618,6 +2716,11 @@ export default function App() {
                               Sat: {item.adjustments.saturation >= 0 ? `+${item.adjustments.saturation}` : item.adjustments.saturation}%
                             </span>
                           )}
+                          {(item.adjustments.sharpen || 0) > 0 && (
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                              Sharpen: +{item.adjustments.sharpen}%
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -3130,6 +3233,54 @@ export default function App() {
                     className="w-full accent-indigo-500 cursor-pointer"
                   />
                 </div>
+              </div>
+
+              {/* Slider 6: Smart Sharpen (Unsharp Mask) */}
+              <div className="pt-2 border-t border-slate-800/80">
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="font-semibold text-slate-200 flex items-center gap-1.5">
+                    <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                    Smart Sharpen (Unsharp Mask)
+                    <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                      {inputMode === 'full_card' ? 'Art Box Only' : 'Whole Card'}
+                    </span>
+                  </span>
+                  <span className="font-mono text-amber-300 font-bold">
+                    +{adjustments.sharpen || 0}%
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="80"
+                  step="1"
+                  value={adjustments.sharpen || 0}
+                  onChange={(e) =>
+                    setAdjustments((prev) => ({
+                      ...prev,
+                      sharpen: Number(e.target.value)
+                    }))
+                  }
+                  className="w-full accent-amber-500 cursor-pointer"
+                />
+                <p className="text-[10px] text-slate-400">
+                  {inputMode === 'full_card'
+                    ? 'Applies 3×3 luminance Unsharp Masking to the Art Box so details pop in print while keeping the Text Box & Borders at 0% (preventing jagged rasterized text).'
+                    : 'Applies 3×3 luminance Unsharp Mask edge enhancement across the entire card.'}
+                </p>
+
+                {/* Golden Rule of Print Warning for Low-Resolution / Upscaled Artwork */}
+                {(geom.isLikelyUpscaled ||
+                  geom.effectiveOpticalPpi < 240 ||
+                  baseScores.resolution < 78 ||
+                  ((adjustments.sharpen || 0) > 0 && geom.effectiveOpticalPpi < 280)) && (
+                  <div className="mt-2 p-2.5 rounded-xl bg-amber-500/15 border border-amber-500/40 flex items-start gap-2">
+                    <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                    <p className="text-[11px] text-amber-200 leading-snug font-medium">
+                      Warning: This image’s original resolution is too low. Sharpening will increase edge contrast but cannot restore lost detail. For best results, use higher resolution source artwork.
+                    </p>
+                  </div>
+                )}
               </div>
 
               {/* 3mm MPC Bleed Padding Toggle */}
