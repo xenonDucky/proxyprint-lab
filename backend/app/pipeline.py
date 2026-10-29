@@ -68,6 +68,8 @@ def compute_optimal_region_sharpening(
     return {
         "sharpen": float(np.clip(art_sharpen, 0.0, 68.0)),
         "textBoxSharpen": float(np.clip(text_sharpen, 0.0, 36.0)),
+        "artTargetDpi": 600.0,
+        "textTargetDpi": 600.0,
     }
 
 
@@ -416,6 +418,8 @@ def optimize_adjustments_coordinate_search(
             "saturation": float(np.clip(round(p["saturation"]), -28, 25)),
             "sharpen": float(np.clip(round(p.get("sharpen", 0.0)), 0, 80)),
             "textBoxSharpen": float(np.clip(round(p.get("textBoxSharpen", 0.0)), 0, 80)),
+            "artTargetDpi": float(np.clip(round(p.get("artTargetDpi", 600.0)), 300, 1200)),
+            "textTargetDpi": float(np.clip(round(p.get("textTargetDpi", 600.0)), 300, 1200)),
         }
 
     def eval_obj(adj: Dict[str, float]) -> float:
@@ -462,6 +466,8 @@ def optimize_adjustments_coordinate_search(
             "saturation": 0.0,
             "sharpen": adaptive_sharpen,
             "textBoxSharpen": adaptive_text_sharpen,
+            "artTargetDpi": 600.0,
+            "textTargetDpi": 600.0,
         },
         clamp_params(
             {

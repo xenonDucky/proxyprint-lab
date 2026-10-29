@@ -33,6 +33,7 @@ import {
   applyUnsharpMaskRgba,
   DPI_BENCHMARKS,
   computeDpiResolutionScore,
+  computeSharpenForTargetDpi,
   optimizePrintAdjustments,
   AdjustmentParams
 } from './colorScience';
@@ -1171,14 +1172,19 @@ export function runFullPrintPipeline({
     // ------------------------------------------------------------------------
     // STAGE 6: BOTTLENECK-CAPPED FINAL SUITABILITY SCORE
     // ------------------------------------------------------------------------
-    const effectiveArtPpi = Math.min(
-      DPI_BENCHMARKS.max,
-      Math.round(effectiveOpticalPpi * (1 + (sharpenAmt / 100) * 0.28))
-    );
-    const effectiveTextPpi = Math.min(
-      DPI_BENCHMARKS.max,
-      Math.round(textOpticalPpi * (1 + (textSharpenAmt / 100) * 0.25))
-    );
+    const effectiveArtPpi =
+      adj.artTargetDpi && adj.artTargetDpi > DPI_BENCHMARKS.min
+        ? Math.min(DPI_BENCHMARKS.max, Math.max(effectiveOpticalPpi, adj.artTargetDpi))
+        : sharpenAmt > 0
+        ? Math.min(DPI_BENCHMARKS.max, Math.max(effectiveOpticalPpi, DPI_BENCHMARKS.ideal))
+        : effectiveOpticalPpi;
+
+    const effectiveTextPpi =
+      adj.textTargetDpi && adj.textTargetDpi > DPI_BENCHMARKS.min
+        ? Math.min(DPI_BENCHMARKS.max, Math.max(textOpticalPpi, adj.textTargetDpi))
+        : textSharpenAmt > 0
+        ? Math.min(DPI_BENCHMARKS.max, Math.max(textOpticalPpi, DPI_BENCHMARKS.ideal))
+        : textOpticalPpi;
     const artBoost =
       sharpenAmt > 0
         ? Math.round(Math.min(10, (sharpenAmt / 100) * 14 * (artDpiScore < 90 ? 1.0 : 0.4)))
@@ -1497,14 +1503,16 @@ export default function App() {
   const [cardStandardId, setCardStandardId] = useState('mpc_bleed');
   const [printerProfileId, setPrinterProfileId] = useState('mpc_commercial');
 
-  const [adjustments, setAdjustments] = useState({
+  const [adjustments, setAdjustments] = useState<AdjustmentParams>({
     shadowLift: 0,
     gamma: 1.0,
     brightness: 0,
     contrast: 0,
     saturation: 0,
     sharpen: 0,
-    textBoxSharpen: 0
+    textBoxSharpen: 0,
+    artTargetDpi: DPI_BENCHMARKS.min,
+    textTargetDpi: DPI_BENCHMARKS.min
   });
   const [padMpcBleed, setPadMpcBleed] = useState(false);
 
@@ -2200,7 +2208,9 @@ export default function App() {
       contrast: item.adjustments.contrast,
       saturation: item.adjustments.saturation,
       sharpen: item.adjustments.sharpen || 0,
-      textBoxSharpen: item.adjustments.textBoxSharpen || 0
+      textBoxSharpen: item.adjustments.textBoxSharpen || 0,
+      artTargetDpi: item.adjustments.artTargetDpi ?? DPI_BENCHMARKS.ideal,
+      textTargetDpi: item.adjustments.textTargetDpi ?? DPI_BENCHMARKS.ideal
     });
     setStudioMode('single');
   };
@@ -2269,7 +2279,9 @@ export default function App() {
       contrast: 0,
       saturation: 0,
       sharpen: 0,
-      textBoxSharpen: 0
+      textBoxSharpen: 0,
+      artTargetDpi: DPI_BENCHMARKS.min,
+      textTargetDpi: DPI_BENCHMARKS.min
     });
     setPadMpcBleed(false);
   };
@@ -2282,6 +2294,8 @@ export default function App() {
     adjustments.saturation !== 0 ||
     (adjustments.sharpen || 0) !== 0 ||
     (adjustments.textBoxSharpen || 0) !== 0 ||
+    (adjustments.artTargetDpi ?? DPI_BENCHMARKS.min) > DPI_BENCHMARKS.min ||
+    (adjustments.textTargetDpi ?? DPI_BENCHMARKS.min) > DPI_BENCHMARKS.min ||
     padMpcBleed;
 
   const getScoreBadgeStyle = (score: number) => {
@@ -2881,14 +2895,16 @@ export default function App() {
                               Sat: {item.adjustments.saturation >= 0 ? `+${item.adjustments.saturation}` : item.adjustments.saturation}%
                             </span>
                           )}
-                          {(item.adjustments.sharpen || 0) > 0 && (
+                          {((item.adjustments.sharpen || 0) > 0 ||
+                            (item.adjustments.artTargetDpi ?? 300) > 300) && (
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
-                              Art Sharpen: +{item.adjustments.sharpen}%
+                              Art: {item.adjustments.artTargetDpi ?? DPI_BENCHMARKS.ideal} DPI (+{item.adjustments.sharpen}%)
                             </span>
                           )}
-                          {(item.adjustments.textBoxSharpen || 0) > 0 && (
+                          {((item.adjustments.textBoxSharpen || 0) > 0 ||
+                            (item.adjustments.textTargetDpi ?? 300) > 300) && (
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-violet-300">
-                              Text Sharpen: +{item.adjustments.textBoxSharpen}%
+                              Text: {item.adjustments.textTargetDpi ?? DPI_BENCHMARKS.ideal} DPI (+{item.adjustments.textBoxSharpen}%)
                             </span>
                           )}
                         </div>
@@ -3416,18 +3432,18 @@ export default function App() {
                 <div className="flex items-center justify-between">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
                     <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                    Dual-Region Smart Sharpen (Unsharp Mask)
+                    Dual-Region DPI &amp; Smart Sharpen
                   </span>
                   <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-950 border border-slate-800 text-slate-400">
                     Min {DPI_BENCHMARKS.min} • Ideal {DPI_BENCHMARKS.ideal} • Max {DPI_BENCHMARKS.max} DPI
                   </span>
                 </div>
 
-                {/* Slider 6a: Art Box Sharpen */}
+                {/* Slider 6a: Art Box Target DPI & Sharpen */}
                 <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-2.5 space-y-1.5">
                   <div className="flex justify-between items-center text-xs">
                     <span className="font-semibold text-slate-200 flex items-center gap-1.5">
-                      Art Box Sharpen
+                      Art Box DPI &amp; Sharpen
                       <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
                         {inputMode === 'full_card' ? 'Art Region' : 'Whole Card'}
                       </span>
@@ -3445,37 +3461,50 @@ export default function App() {
                         {geom.effectiveOpticalPpi} → {curMetrics.effectiveArtPpi} DPI
                       </span>
                       <span className="font-mono text-amber-300 font-bold">
-                        +{adjustments.sharpen || 0}%
+                        {adjustments.artTargetDpi ??
+                          ((adjustments.sharpen || 0) > 0 ? DPI_BENCHMARKS.ideal : DPI_BENCHMARKS.min)}{' '}
+                        DPI (+{adjustments.sharpen || 0}%)
                       </span>
                     </div>
                   </div>
                   <input
                     type="range"
-                    min="0"
-                    max="80"
-                    step="1"
-                    value={adjustments.sharpen || 0}
-                    onChange={(e) =>
+                    min={DPI_BENCHMARKS.min}
+                    max={DPI_BENCHMARKS.max}
+                    step={10}
+                    value={
+                      adjustments.artTargetDpi ??
+                      ((adjustments.sharpen || 0) > 0 ? DPI_BENCHMARKS.ideal : DPI_BENCHMARKS.min)
+                    }
+                    onChange={(e) => {
+                      const targetDpi = Number(e.target.value);
+                      const computedSharpen = computeSharpenForTargetDpi(
+                        geom.effectiveOpticalPpi,
+                        targetDpi,
+                        'art'
+                      );
                       setAdjustments((prev) => ({
                         ...prev,
-                        sharpen: Number(e.target.value)
-                      }))
-                    }
+                        artTargetDpi: targetDpi,
+                        sharpen: computedSharpen
+                      }));
+                    }}
                     className="w-full accent-amber-500 cursor-pointer"
                   />
-                  <div className="flex justify-between text-[10px] text-slate-400">
-                    <span>
-                      Optical Art Box DPI (Min {DPI_BENCHMARKS.min} / Ideal {DPI_BENCHMARKS.ideal} / Max {DPI_BENCHMARKS.max})
+                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                    <span>Min: {DPI_BENCHMARKS.min} DPI</span>
+                    <span className="text-amber-300 font-semibold">
+                      Ideal: {DPI_BENCHMARKS.ideal} DPI
                     </span>
-                    <span className="font-mono text-slate-300">0% – 80%</span>
+                    <span>Max: {DPI_BENCHMARKS.max} DPI</span>
                   </div>
                 </div>
 
-                {/* Slider 6b: Card Text Box Sharpen */}
+                {/* Slider 6b: Card Text Box Target DPI & Sharpen */}
                 <div className="bg-slate-950/60 border border-slate-800/80 rounded-xl p-2.5 space-y-1.5">
                   <div className="flex justify-between items-center text-xs">
                     <span className="font-semibold text-slate-200 flex items-center gap-1.5">
-                      Card Text Box Sharpen
+                      Card Text Box DPI &amp; Sharpen
                       <span className="text-[9px] font-bold uppercase px-1.5 py-0.2 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30">
                         Type &amp; Rules Box
                       </span>
@@ -3493,37 +3522,50 @@ export default function App() {
                         {geom.textOpticalPpi} → {curMetrics.effectiveTextPpi} DPI
                       </span>
                       <span className="font-mono text-violet-300 font-bold">
-                        +{adjustments.textBoxSharpen || 0}%
+                        {adjustments.textTargetDpi ??
+                          ((adjustments.textBoxSharpen || 0) > 0 ? DPI_BENCHMARKS.ideal : DPI_BENCHMARKS.min)}{' '}
+                        DPI (+{adjustments.textBoxSharpen || 0}%)
                       </span>
                     </div>
                   </div>
                   <input
                     type="range"
-                    min="0"
-                    max="80"
-                    step="1"
-                    value={adjustments.textBoxSharpen || 0}
-                    onChange={(e) =>
+                    min={DPI_BENCHMARKS.min}
+                    max={DPI_BENCHMARKS.max}
+                    step={10}
+                    value={
+                      adjustments.textTargetDpi ??
+                      ((adjustments.textBoxSharpen || 0) > 0 ? DPI_BENCHMARKS.ideal : DPI_BENCHMARKS.min)
+                    }
+                    onChange={(e) => {
+                      const targetDpi = Number(e.target.value);
+                      const computedTextSharpen = computeSharpenForTargetDpi(
+                        geom.textOpticalPpi,
+                        targetDpi,
+                        'text'
+                      );
                       setAdjustments((prev) => ({
                         ...prev,
-                        textBoxSharpen: Number(e.target.value)
-                      }))
-                    }
+                        textTargetDpi: targetDpi,
+                        textBoxSharpen: computedTextSharpen
+                      }));
+                    }}
                     className="w-full accent-violet-500 cursor-pointer"
                   />
-                  <div className="flex justify-between text-[10px] text-slate-400">
-                    <span>
-                      Optical Text Box DPI (Min {DPI_BENCHMARKS.min} / Ideal {DPI_BENCHMARKS.ideal} / Max {DPI_BENCHMARKS.max})
+                  <div className="flex justify-between text-[10px] text-slate-400 font-mono">
+                    <span>Min: {DPI_BENCHMARKS.min} DPI</span>
+                    <span className="text-violet-300 font-semibold">
+                      Ideal: {DPI_BENCHMARKS.ideal} DPI
                     </span>
-                    <span className="font-mono text-slate-300">0% – 80%</span>
+                    <span>Max: {DPI_BENCHMARKS.max} DPI</span>
                   </div>
                 </div>
 
                 <p className="text-[10px] text-slate-400 leading-relaxed">
-                  <span className="text-slate-200 font-semibold">Auto-Optimize for Printer</span> independently measures Optical DPI in both the{' '}
+                  <span className="text-slate-200 font-semibold">Auto-Optimize for Printer</span> sets both the{' '}
                   <span className="text-amber-300 font-semibold">Art Box</span> and{' '}
-                  <span className="text-violet-300 font-semibold">Card Text Box</span> against the{' '}
-                  <span className="font-mono text-slate-200">300 Min / 600 Ideal / 1200 Max DPI</span> scale and sets both sliders automatically (using a gentler curve on text to prevent glyph halos).
+                  <span className="text-violet-300 font-semibold">Card Text Box</span> sliders to the ideal{' '}
+                  <span className="font-mono text-emerald-300 font-bold">600 DPI</span> target and calculates the exact Unsharp Mask boost from each region&apos;s autodetected Optical DPI.
                 </p>
 
                 {/* Golden Rule of Print Warning for Low-Resolution / Upscaled Artwork */}

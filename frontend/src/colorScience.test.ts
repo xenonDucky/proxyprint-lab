@@ -170,13 +170,17 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
     expect(computeDpiResolutionScore(1200)).toBe(100);
     expect(computeDpiResolutionScore(150)).toBeLessThan(75);
 
-    // At >= 600 DPI (ideal), both Art Box and Text Box sharpen should be 0%
+    // At >= 600 DPI (ideal), both Art Box and Text Box target 600 DPI with 0% additional sharpen
     const idealRegions = computeOptimalRegionSharpening(600, 600);
+    expect(idealRegions.artTargetDpi).toBe(600);
+    expect(idealRegions.textTargetDpi).toBe(600);
     expect(idealRegions.sharpen).toBe(0);
     expect(idealRegions.textBoxSharpen).toBe(0);
 
-    // At 300 DPI (minimum acceptable), both sliders receive moderate optical sharpening toward 600 DPI ideal
+    // At 300 DPI (minimum acceptable), both sliders set target DPI to 600 and receive optical sharpening
     const minRegions = computeOptimalRegionSharpening(300, 300);
+    expect(minRegions.artTargetDpi).toBe(600);
+    expect(minRegions.textTargetDpi).toBe(600);
     expect(minRegions.sharpen).toBe(32);
     expect(minRegions.textBoxSharpen).toBe(20);
 
