@@ -13,7 +13,8 @@ import {
   optimizePrintAdjustments
 } from './colorScience';
 import { createZipArchive } from './zipBuilder';
-import { PRINTER_PROFILES, simulatePrinterOutput, applyUserAdjustments } from './App';
+import { PRINTER_PROFILES, CARD_STANDARDS, simulatePrinterOutput, applyUserAdjustments } from './App';
+import { runFullPrintPipeline } from './printPipeline';
 
 describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
   it('converts sRGB to CIELAB accurately', () => {
@@ -223,5 +224,71 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
     expect(vmR).toBeGreaterThan(vgR);
     expect(vmL).toBeGreaterThan(vgL);
     expect(vmR).toBeGreaterThanOrEqual(13);
+  });
+
+  it('accurately positions textbox guides and dynamically updates them when bleed is toggled', () => {
+    const mockContext = {
+      fillStyle: '',
+      fillRect: () => {},
+      drawImage: () => {},
+      getImageData: () => ({ data: new Uint8ClampedArray(240 * 330 * 4) })
+    };
+    const prevDoc = (globalThis as any).document;
+    (globalThis as any).document = {
+      createElement: () => ({
+        width: 0,
+        height: 0,
+        getContext: () => mockContext
+      })
+    };
+
+    const trimCanvas = {
+      width: 744,
+      height: 1039,
+      getContext: () => mockContext
+    } as unknown as HTMLCanvasElement;
+
+    try {
+      // 1. Evaluate with padMpcBleed: false
+      const unpaddedResult = runFullPrintPipeline({
+        sourceCanvas: trimCanvas,
+        inputMode: 'full_card',
+        cardStandard: CARD_STANDARDS.tcg_trim,
+        printerProfile: PRINTER_PROFILES.mpc_commercial,
+        adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0, textBoxSharpen: 0 },
+        padMpcBleed: false
+      })!;
+
+      expect(unpaddedResult.geometry.has3mmBleed).toBe(false);
+      const unpaddedVm = unpaddedResult.current.visualMaps!;
+      expect(unpaddedVm.artBoxNorm.x).toBeCloseTo(0.078, 2);
+      expect(unpaddedVm.artBoxNorm.y).toBeCloseTo(0.112, 2);
+      // Rules text box must be aligned at y: 0.614 (not overlapping type banner at 0.556)
+      expect(unpaddedVm.textBoxNorm!.y).toBeCloseTo(0.614, 2);
+      expect(unpaddedVm.textBoxNorm!.h).toBeCloseTo(0.275, 2);
+      // Type banner guide must be at y: 0.556
+      expect(unpaddedVm.typeBannerNorm!.y).toBeCloseTo(0.556, 2);
+      expect(unpaddedVm.typeBannerNorm!.h).toBeCloseTo(0.048, 2);
+
+      // 2. Evaluate with padMpcBleed: true
+      const paddedResult = runFullPrintPipeline({
+        sourceCanvas: trimCanvas,
+        inputMode: 'full_card',
+        cardStandard: CARD_STANDARDS.mpc_bleed,
+        printerProfile: PRINTER_PROFILES.mpc_commercial,
+        adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0, textBoxSharpen: 0 },
+        padMpcBleed: true
+      })!;
+
+      expect(paddedResult.geometry.has3mmBleed).toBe(true);
+      const paddedVm = paddedResult.current.visualMaps!;
+      // When bleed is padded, the guides must shift inward to match the padded trim frame
+      expect(paddedVm.artBoxNorm.x).toBeGreaterThan(unpaddedVm.artBoxNorm.x);
+      expect(paddedVm.textBoxNorm!.x).toBeGreaterThan(unpaddedVm.textBoxNorm!.x);
+      expect(paddedVm.artBoxNorm.w).toBeLessThan(unpaddedVm.artBoxNorm.w);
+      expect(paddedVm.textBoxNorm!.w).toBeLessThan(unpaddedVm.textBoxNorm!.w);
+    } finally {
+      (globalThis as any).document = prevDoc;
+    }
   });
 });

@@ -118,6 +118,7 @@ export interface VisualMaps {
   patchContrastGrid: ContrastPatchCell[][];
   artBoxNorm: NormalizedRegion;
   textBoxNorm: NormalizedRegion | null;
+  typeBannerNorm?: NormalizedRegion | null;
 }
 
 export interface EvaluationResult {

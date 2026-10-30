@@ -35,8 +35,11 @@ export function runFullPrintPipeline({
   const rawW = sourceCanvas.width;
   const rawH = sourceCanvas.height;
 
-  const bleedFactorX = padMpcBleed ? 69 / 63 : 1.0;
-  const bleedFactorY = padMpcBleed ? 94 / 88 : 1.0;
+  const isNativeBleed = Math.abs(rawW / rawH - 69 / 94) < 0.008;
+  const has3mmBleed = isNativeBleed || padMpcBleed;
+
+  const bleedFactorX = !isNativeBleed && padMpcBleed ? 69 / 63 : 1.0;
+  const bleedFactorY = !isNativeBleed && padMpcBleed ? 94 / 88 : 1.0;
   const effectiveW = Math.round(rawW * bleedFactorX);
   const effectiveH = Math.round(rawH * bleedFactorY);
 
@@ -50,8 +53,8 @@ export function runFullPrintPipeline({
   ctx.fillStyle = '#070709';
   ctx.fillRect(0, 0, AN_W, AN_H);
 
-  const padX = padMpcBleed ? Math.round(AN_W * (3 / 69)) : 0;
-  const padY = padMpcBleed ? Math.round(AN_H * (3 / 94)) : 0;
+  const padX = !isNativeBleed && padMpcBleed ? Math.round(AN_W * (3 / 69)) : 0;
+  const padY = !isNativeBleed && padMpcBleed ? Math.round(AN_H * (3 / 94)) : 0;
   ctx.drawImage(sourceCanvas, padX, padY, AN_W - padX * 2, AN_H - padY * 2);
 
   const rawImgData = ctx.getImageData(0, 0, AN_W, AN_H);
@@ -66,7 +69,6 @@ export function runFullPrintPipeline({
 
   const actualAspect = effectiveW / effectiveH;
   const aspectDiffPct = (Math.abs(actualAspect - cardStandard.aspectRatio) / cardStandard.aspectRatio) * 100;
-  const has3mmBleed = padMpcBleed || Math.abs(rawW / rawH - 69 / 94) < 0.035;
 
   // Measure Laplacian Edge Gradient & 2D FFT High-Frequency Energy
   const sharpW = 120;
@@ -95,8 +97,8 @@ export function runFullPrintPipeline({
 
   const sTx0 = sAx0;
   const sTx1 = sAx1;
-  const sTy0 = Math.floor(sBleedY + sTrimH * 0.556);
-  const sTy1 = Math.ceil(sBleedY + sTrimH * 0.895);
+  const sTy0 = Math.floor(sBleedY + sTrimH * 0.614);
+  const sTy1 = Math.ceil(sBleedY + sTrimH * 0.889);
 
   let lapSum = 0;
   let lapSqSum = 0;
@@ -194,8 +196,13 @@ export function runFullPrintPipeline({
 
     const textX0 = maskX0;
     const textX1 = maskX1;
-    const textY0 = Math.floor(bleedOffsetY + trimSpanH * 0.556);
-    const textY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.895);
+    const textY0 = Math.floor(bleedOffsetY + trimSpanH * 0.614);
+    const textY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.889);
+
+    const typeX0 = Math.floor(bleedOffsetX + trimSpanW * 0.068);
+    const typeX1 = Math.ceil(bleedOffsetX + trimSpanW * 0.932);
+    const typeY0 = Math.floor(bleedOffsetY + trimSpanH * 0.556);
+    const typeY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.604);
 
     // Apply Smart MTG Unsharp Mask independently to Art Box and Card Text Box
     const workPixels = new Uint8ClampedArray(rawPixels);
@@ -498,6 +505,12 @@ export function runFullPrintPipeline({
               y: textY0 / AN_H,
               w: (textX1 - textX0) / AN_W,
               h: (textY1 - textY0) / AN_H
+            },
+            typeBannerNorm: {
+              x: typeX0 / AN_W,
+              y: typeY0 / AN_H,
+              w: (typeX1 - typeX0) / AN_W,
+              h: (typeY1 - typeY0) / AN_H
             }
           }
         : null

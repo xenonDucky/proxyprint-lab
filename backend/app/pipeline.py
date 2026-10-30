@@ -142,8 +142,15 @@ def evaluate_color_and_tones(
     mask_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.112))
     mask_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.547))
 
-    text_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.556))
-    text_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.895))
+    text_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.614))
+    text_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.889))
+    text_x0 = mask_x0
+    text_x1 = mask_x1
+
+    type_x0 = int(np.floor(bleed_offset_x + trim_span_w * 0.068))
+    type_x1 = int(np.ceil(bleed_offset_x + trim_span_w * 0.932))
+    type_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.556))
+    type_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.604))
 
     if input_mode == "artwork_only":
         in_art_mask = np.ones((an_h, an_w), dtype=bool)
@@ -335,6 +342,18 @@ def evaluate_color_and_tones(
                 "y": round(mask_y0 / an_h, 4),
                 "w": round((mask_x1 - mask_x0) / an_w, 4),
                 "h": round((mask_y1 - mask_y0) / an_h, 4),
+            },
+            "textBoxNorm": {
+                "x": round(text_x0 / an_w, 4),
+                "y": round(text_y0 / an_h, 4),
+                "w": round((text_x1 - text_x0) / an_w, 4),
+                "h": round((text_y1 - text_y0) / an_h, 4),
+            },
+            "typeBannerNorm": {
+                "x": round(type_x0 / an_w, 4),
+                "y": round(type_y0 / an_h, 4),
+                "w": round((type_x1 - type_x0) / an_w, 4),
+                "h": round((type_y1 - type_y0) / an_h, 4),
             },
         }
 
@@ -659,9 +678,9 @@ def run_full_backend_pipeline(
     effective_optical_ppi = min(1200, int(round(nominal_ppi * optical_sharpness_factor)))
     is_likely_upscaled = bool(nominal_ppi >= 250 and optical_sharpness_factor < 0.68)
 
-    # 2. Card Text Box Region (Type Line + Rules Text Box: y 0.556..0.895)
-    ty_start = max(0, int(np.floor(sharp_bleed_y + sharp_trim_h * 0.556)))
-    ty_end = min(sharp_h, int(np.ceil(sharp_bleed_y + sharp_trim_h * 0.895)))
+    # 2. Card Text Box Region (Rules Text Box: y 0.614..0.889)
+    ty_start = max(0, int(np.floor(sharp_bleed_y + sharp_trim_h * 0.614)))
+    ty_end = min(sharp_h, int(np.ceil(sharp_bleed_y + sharp_trim_h * 0.889)))
     text_gray = gray[ty_start:ty_end, x_start:x_end]
     if text_gray.size > 16:
         text_lap = cv2.Laplacian(text_gray, cv2.CV_32F, ksize=1)

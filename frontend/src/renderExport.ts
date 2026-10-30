@@ -14,8 +14,10 @@ export function renderCardToPrintReadyCanvas(
 ): HTMLCanvasElement {
   const rawW = sourceCanvas.width;
   const rawH = sourceCanvas.height;
-  const outW = padMpcBleed ? Math.round(rawW * (69 / 63)) : rawW;
-  const outH = padMpcBleed ? Math.round(rawH * (94 / 88)) : rawH;
+  const isNativeBleed = Math.abs(rawW / rawH - 69 / 94) < 0.008;
+  const shouldPad = !isNativeBleed && padMpcBleed;
+  const outW = shouldPad ? Math.round(rawW * (69 / 63)) : rawW;
+  const outH = shouldPad ? Math.round(rawH * (94 / 88)) : rawH;
 
   const outCanvas = document.createElement('canvas');
   outCanvas.width = outW;
@@ -25,15 +27,15 @@ export function renderCardToPrintReadyCanvas(
   ctx.fillStyle = '#070709';
   ctx.fillRect(0, 0, outW, outH);
 
-  const px = padMpcBleed ? Math.round(outW * (3 / 69)) : 0;
-  const py = padMpcBleed ? Math.round(outH * (3 / 94)) : 0;
+  const px = shouldPad ? Math.round(outW * (3 / 69)) : 0;
+  const py = shouldPad ? Math.round(outH * (3 / 94)) : 0;
   ctx.drawImage(sourceCanvas, px, py, outW - px * 2, outH - py * 2);
 
   const imgData = ctx.getImageData(0, 0, outW, outH);
   const d = imgData.data;
-  const effectiveBleed = has3mmBleed || padMpcBleed;
-  const bleedOffX = effectiveBleed ? outW * (3 / 69) : 0;
-  const bleedOffY = effectiveBleed ? outH * (3 / 94) : 0;
+  const effectiveBleed = isNativeBleed || padMpcBleed;
+  const bleedOffX = effectiveBleed ? Math.round(outW * (3 / 69)) : 0;
+  const bleedOffY = effectiveBleed ? Math.round(outH * (3 / 94)) : 0;
   const trimW = outW - bleedOffX * 2;
   const trimH = outH - bleedOffY * 2;
   const ax0 = Math.floor(bleedOffX + trimW * 0.078);
@@ -43,8 +45,8 @@ export function renderCardToPrintReadyCanvas(
 
   const tx0 = ax0;
   const tx1 = ax1;
-  const ty0 = Math.floor(bleedOffY + trimH * 0.556);
-  const ty1 = Math.ceil(bleedOffY + trimH * 0.895);
+  const ty0 = Math.floor(bleedOffY + trimH * 0.614);
+  const ty1 = Math.ceil(bleedOffY + trimH * 0.889);
 
   if ((adjustments.sharpen || 0) > 0) {
     applyUnsharpMaskRgba(
@@ -93,14 +95,19 @@ export function generateBatchThumbnails(
   const TW = 156;
   const TH = 214;
 
+  const rawW = sourceCanvas.width;
+  const rawH = sourceCanvas.height;
+  const isNativeBleed = Math.abs(rawW / rawH - 69 / 94) < 0.008;
+  const shouldPad = !isNativeBleed && padMpcBleed;
+
   const origC = document.createElement('canvas');
   origC.width = TW;
   origC.height = TH;
   const oCtx = origC.getContext('2d')!;
   oCtx.fillStyle = '#070709';
   oCtx.fillRect(0, 0, TW, TH);
-  const px = padMpcBleed ? Math.round(TW * (3 / 69)) : 0;
-  const py = padMpcBleed ? Math.round(TH * (3 / 94)) : 0;
+  const px = shouldPad ? Math.round(TW * (3 / 69)) : 0;
+  const py = shouldPad ? Math.round(TH * (3 / 94)) : 0;
   oCtx.drawImage(sourceCanvas, px, py, TW - px * 2, TH - py * 2);
 
   const simC = document.createElement('canvas');
@@ -111,9 +118,9 @@ export function generateBatchThumbnails(
 
   const imgData = sCtx.getImageData(0, 0, TW, TH);
   const d = imgData.data;
-  const effectiveBleed = has3mmBleed || padMpcBleed;
-  const bleedOffX = effectiveBleed ? TW * (3 / 69) : 0;
-  const bleedOffY = effectiveBleed ? TH * (3 / 94) : 0;
+  const effectiveBleed = isNativeBleed || padMpcBleed;
+  const bleedOffX = effectiveBleed ? Math.round(TW * (3 / 69)) : 0;
+  const bleedOffY = effectiveBleed ? Math.round(TH * (3 / 94)) : 0;
   const trimW = TW - bleedOffX * 2;
   const trimH = TH - bleedOffY * 2;
   const ax0 = Math.floor(bleedOffX + trimW * 0.078);
@@ -123,8 +130,8 @@ export function generateBatchThumbnails(
 
   const tx0 = ax0;
   const tx1 = ax1;
-  const ty0 = Math.floor(bleedOffY + trimH * 0.556);
-  const ty1 = Math.ceil(bleedOffY + trimH * 0.895);
+  const ty0 = Math.floor(bleedOffY + trimH * 0.614);
+  const ty1 = Math.ceil(bleedOffY + trimH * 0.889);
 
   if ((adjustments.sharpen || 0) > 0) {
     applyUnsharpMaskRgba(

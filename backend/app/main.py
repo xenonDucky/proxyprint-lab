@@ -147,7 +147,7 @@ async def export_print_ready_png(
         th = out_h - by * 2.0
         ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
         ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
-        ty0, ty1 = int(np.floor(by + th * 0.556)), int(np.ceil(by + th * 0.895))
+        ty0, ty1 = int(np.floor(by + th * 0.614)), int(np.ceil(by + th * 0.889))
 
         text_box_sharpen = float(adj.get("textBoxSharpen", 0.0))
 
@@ -260,7 +260,7 @@ async def batch_auto_optimize_and_export_zip(
                 th = out_h - by * 2.0
                 ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
                 ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
-                ty0, ty1 = int(np.floor(by + th * 0.556)), int(np.ceil(by + th * 0.895))
+                ty0, ty1 = int(np.floor(by + th * 0.614)), int(np.ceil(by + th * 0.889))
 
                 if input_mode == "artwork_only":
                     comp_rgb = apply_user_adjustments(canvas_rgb, opt_adj)

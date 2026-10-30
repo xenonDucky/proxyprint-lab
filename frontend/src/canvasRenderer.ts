@@ -37,11 +37,15 @@ export function renderPreviewCanvases({
   const DISP_H = 490;
   const lut3D = analysis.printer3DLut;
 
+  const rawW = sourceCanvas.width;
+  const rawH = sourceCanvas.height;
+  const isNativeBleed = Math.abs(rawW / rawH - 69 / 94) < 0.008;
+
   const drawBaseImage = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
     ctx.fillStyle = '#070709';
     ctx.fillRect(0, 0, w, h);
-    const px = padMpcBleed ? Math.round(w * (3 / 69)) : 0;
-    const py = padMpcBleed ? Math.round(h * (3 / 94)) : 0;
+    const px = (!isNativeBleed && padMpcBleed) ? Math.round(w * (3 / 69)) : 0;
+    const py = (!isNativeBleed && padMpcBleed) ? Math.round(h * (3 / 94)) : 0;
     ctx.drawImage(sourceCanvas, px, py, w - px * 2, h - py * 2);
   };
 
@@ -50,8 +54,8 @@ export function renderPreviewCanvases({
     ctx.save();
 
     const hasBleed = analysis.geometry.has3mmBleed;
-    const bleedPxX = hasBleed ? w * (3 / 69) : 0;
-    const bleedPxY = hasBleed ? h * (3 / 94) : 0;
+    const bleedPxX = hasBleed ? Math.round(w * (3 / 69)) : 0;
+    const bleedPxY = hasBleed ? Math.round(h * (3 / 94)) : 0;
 
     if (hasBleed) {
       ctx.strokeStyle = 'rgba(244, 63, 94, 0.85)';
@@ -70,17 +74,26 @@ export function renderPreviewCanvases({
       h - bleedPxY * 2 - 2
     );
 
-    const safeOffsetX = bleedPxX + (w - bleedPxX * 2) * 0.048;
-    const safeOffsetY = bleedPxY + (h - bleedPxY * 2) * 0.048;
-    ctx.strokeStyle = 'rgba(52, 211, 153, 0.75)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3, 3]);
-    ctx.strokeRect(
-      safeOffsetX,
-      safeOffsetY,
-      w - safeOffsetX * 2,
-      h - safeOffsetY * 2
-    );
+    const trimSpanW = w - bleedPxX * 2;
+    const trimSpanH = h - bleedPxY * 2;
+    // MTG card frame black border is uniform in physical millimeters (~3mm on all 4 sides).
+    // In normalized trim space: Width margin is 0.048 (3mm / 63mm). Height margin is 0.048 * (63 / 88) = 0.03436 (3mm / 88mm).
+    const safeOffsetX = bleedPxX + trimSpanW * 0.048;
+    const safeOffsetY = bleedPxY + trimSpanH * (0.048 * (63 / 88));
+    const safeWidth = trimSpanW * (1 - 2 * 0.048);
+    const safeHeight = trimSpanH * (1 - 2 * 0.048 * (63 / 88));
+    const safeRadius = trimSpanW * 0.03;
+
+    ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
+    ctx.lineWidth = 1.2;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(safeOffsetX, safeOffsetY, safeWidth, safeHeight, safeRadius);
+    } else {
+      ctx.rect(safeOffsetX, safeOffsetY, safeWidth, safeHeight);
+    }
+    ctx.stroke();
 
     if (inputMode === 'full_card' && analysis.current.visualMaps) {
       const ab = analysis.current.visualMaps.artBoxNorm;
@@ -102,7 +115,19 @@ export function renderPreviewCanvases({
 
         ctx.fillStyle = 'rgba(196, 181, 253, 0.95)';
         ctx.font = 'bold 9px sans-serif';
-        ctx.fillText('TEXT BOX REGION', tb.x * w + 6, tb.y * h + 12);
+        ctx.fillText('RULES TEXT BOX', tb.x * w + 6, tb.y * h + 12);
+      }
+
+      const ty = analysis.current.visualMaps.typeBannerNorm;
+      if (ty) {
+        ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 3]);
+        ctx.strokeRect(ty.x * w, ty.y * h, ty.w * w, ty.h * h);
+
+        ctx.fillStyle = 'rgba(125, 211, 252, 0.9)';
+        ctx.font = 'bold 8px sans-serif';
+        ctx.fillText('TYPE LINE', ty.x * w + 6, ty.y * h + 10);
       }
     }
 

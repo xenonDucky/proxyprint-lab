@@ -429,12 +429,14 @@ export function drawCardContent(
   );
 }
 
-export function generatePresetCardCanvas(presetId: string): HTMLCanvasElement {
+export function generatePresetCardCanvas(presetId: string, hasBleed: boolean = false): HTMLCanvasElement {
   const canvas = document.createElement('canvas');
+  const width = hasBleed ? 816 : 744;
+  const height = hasBleed ? 1110 : 1039;
+  canvas.width = width;
+  canvas.height = height;
 
   if (presetId === 'blurry_upscale') {
-    canvas.width = 744;
-    canvas.height = 1039;
     const lowCanvas = document.createElement('canvas');
     lowCanvas.width = 248;
     lowCanvas.height = 346;
@@ -443,13 +445,11 @@ export function generatePresetCardCanvas(presetId: string): HTMLCanvasElement {
     const ctx = canvas.getContext('2d')!;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(lowCanvas, 0, 0, 744, 1039);
+    ctx.drawImage(lowCanvas, 0, 0, width, height);
     return canvas;
   }
 
-  canvas.width = 816;
-  canvas.height = 1110;
   const ctx = canvas.getContext('2d')!;
-  drawCardContent(ctx, 816, 1110, presetId, true);
+  drawCardContent(ctx, width, height, presetId, hasBleed);
   return canvas;
 }
