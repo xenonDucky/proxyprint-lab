@@ -110,6 +110,11 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
     // For a dark muddy card on Home Matte paper, the optimizer should lift shadows & boost contrast
     expect(opt.shadowLift).toBeGreaterThan(20);
     expect(opt.gamma).toBeGreaterThanOrEqual(0.95);
+    // Sharpening sliders remain 0 during auto-optimization
+    expect(opt.sharpen).toBe(0);
+    expect(opt.textBoxSharpen).toBe(0);
+    expect(opt.artTargetDpi).toBe(DPI_BENCHMARKS.min);
+    expect(opt.textTargetDpi).toBe(DPI_BENCHMARKS.min);
   });
 
   it('builds a standards-compliant ZIP archive for batch card export', async () => {

@@ -369,10 +369,7 @@ export function LiveSimulator({
           </div>
 
           <p className="text-[10px] text-slate-400 leading-relaxed">
-            <span className="text-slate-200 font-semibold">Auto-Optimize for Printer</span> sets both the{' '}
-            <span className="text-amber-300 font-semibold">Art Box</span> and{' '}
-            <span className="text-violet-300 font-semibold">Card Text Box</span> sliders to the ideal{' '}
-            <span className="font-mono text-emerald-300 font-bold">600 DPI</span> target and calculates the exact Unsharp Mask boost from each region&apos;s autodetected Optical DPI.
+            <span className="text-slate-200 font-semibold">Auto-Optimize for Printer</span> optimizes tone, gamma, shadow lift, and color reproduction without applying artificial sharpening, preserving unadulterated source resolution so you can easily identify artwork that requires a higher-quality source image.
           </p>
 
           {/* Golden Rule of Print Warning for Low-Resolution / Upscaled Artwork */}

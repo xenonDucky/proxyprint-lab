@@ -859,17 +859,12 @@ export function optimizePrintAdjustments({
     )
   });
 
-  // Compute optimal sharpening for both Art Box and Card Text Box using 300 DPI min / 600 DPI ideal / 1200 DPI max
-  const fallbackPpi = Math.round(((resolutionScore - 15) / 60) * 300);
-  const {
-    sharpen: recommendedSharpen,
-    textBoxSharpen: recommendedTextSharpen,
-    artTargetDpi: recommendedArtTargetDpi,
-    textTargetDpi: recommendedTextTargetDpi
-  } = computeOptimalRegionSharpening(
-    artOpticalPpi ?? fallbackPpi,
-    textOpticalPpi ?? fallbackPpi
-  );
+  // Sharpening sliders remain at 0 in auto-optimization so users can easily distinguish which
+  // artworks genuinely have lower native resolution and need higher-quality source images.
+  const recommendedSharpen = 0;
+  const recommendedTextSharpen = 0;
+  const recommendedArtTargetDpi = DPI_BENCHMARKS.min;
+  const recommendedTextTargetDpi = DPI_BENCHMARKS.min;
 
   // Histogram-informed warm start seeds (ensures global awareness across dark, neon, and washed-out art)
   const adaptiveLift = Math.max(

@@ -454,8 +454,10 @@ def optimize_adjustments_coordinate_search(
     )
     adaptive_gamma = 1.12 if p25_l < 22.0 else (0.94 if p25_l > 55.0 else 1.04)
     adaptive_contrast = 12.0 if (p90_l - p10_l) < 45.0 else 6.0
-    adaptive_sharpen = opt_region_sharpen["sharpen"]
-    adaptive_text_sharpen = opt_region_sharpen["textBoxSharpen"]
+    # Sharpening sliders remain at 0 in auto-optimization so users can easily distinguish which
+    # artworks genuinely have lower native resolution and need higher-quality source images.
+    adaptive_sharpen = 0.0
+    adaptive_text_sharpen = 0.0
 
     seeds = [
         {
@@ -464,10 +466,10 @@ def optimize_adjustments_coordinate_search(
             "brightness": 0.0,
             "contrast": 0.0,
             "saturation": 0.0,
-            "sharpen": adaptive_sharpen,
-            "textBoxSharpen": adaptive_text_sharpen,
-            "artTargetDpi": 600.0,
-            "textTargetDpi": 600.0,
+            "sharpen": 0.0,
+            "textBoxSharpen": 0.0,
+            "artTargetDpi": 300.0,
+            "textTargetDpi": 300.0,
         },
         clamp_params(
             {
