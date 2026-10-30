@@ -93,4 +93,36 @@ PRINTER_PROFILES: Dict[str, Dict[str, Any]] = {
         "gamut_clamp_strength": 0.85,
         "recommended_toe_lift": 20,
     },
+    "vinyl_glossy": {
+        "id": "vinyl_glossy",
+        "name": "Vinyl Sticker Glossy Paper",
+        "badge": "Impermeable / Razor Sharp Dmax",
+        "description": (
+            "Plastic base holds razor-sharp dots with zero droplet wicking and incredibly deep Dmax "
+            "(L*_min = 5.0). Needs slight shadow/gamma lift to prevent heavy black ink pooling and smearing."
+        ),
+        "black_floor_l": 5.0,
+        "paper_white_l": 97.5,
+        "shadow_crush_threshold": 14.0,
+        "shadow_crush_strength": 0.80,
+        "saturation_multiplier": 0.96,
+        "gamut_clamp_strength": 0.86,
+        "recommended_toe_lift": 22,
+    },
+    "vinyl_matte": {
+        "id": "vinyl_matte",
+        "name": "Vinyl Sticker Matte Paper",
+        "badge": "Synthetic Matte Hybrid / Elevated Gray",
+        "description": (
+            "Hybrid substrate: lacks fibrous wicking of cardstock but scatters ambient light "
+            "(L*_min = 14.0). Requires heavy shadow/gamma lift to prevent dark artwork crushing into a flat gray block."
+        ),
+        "black_floor_l": 14.0,
+        "paper_white_l": 94.0,
+        "shadow_crush_threshold": 24.0,
+        "shadow_crush_strength": 0.50,
+        "saturation_multiplier": 0.85,
+        "gamut_clamp_strength": 0.68,
+        "recommended_toe_lift": 48,
+    },
 }

@@ -46,6 +46,8 @@ def test_health_endpoint():
     data = res.json()
     assert data["status"] == "ok"
     assert "mpc_commercial" in data["profiles"]
+    assert "vinyl_glossy" in data["profiles"]
+    assert "vinyl_matte" in data["profiles"]
 
 
 def test_cielab_and_delta_e_2000():

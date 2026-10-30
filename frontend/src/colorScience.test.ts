@@ -190,4 +190,33 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
     expect(lowRegions.textBoxSharpen).toBeGreaterThan(minRegions.textBoxSharpen);
     expect(lowRegions.textBoxSharpen).toBeLessThan(lowRegions.sharpen);
   });
+
+  it('correctly simulates Vinyl Sticker Glossy and Vinyl Sticker Matte paper profiles', () => {
+    // 1. Vinyl Glossy Profile Check
+    const vinylGlossy = PRINTER_PROFILES.vinyl_glossy;
+    expect(vinylGlossy).toBeDefined();
+    expect(vinylGlossy.blackFloorL).toBeCloseTo(5.0, 1);
+    expect(vinylGlossy.paperWhiteL).toBeCloseTo(97.5, 1);
+    expect(vinylGlossy.shadowCrushThreshold).toBeLessThanOrEqual(15.0);
+
+    // Deep black simulation on glossy vinyl retains high darkness (low RGB values)
+    const [vgR, vgG, vgB] = simulatePrinterOutput(0, 0, 0, vinylGlossy);
+    const [vgL] = rgbToLab(vgR, vgG, vgB);
+    expect(vgR).toBeLessThanOrEqual(6);
+    expect(vgL).toBeLessThan(2.0);
+
+    // 2. Vinyl Matte Profile Check
+    const vinylMatte = PRINTER_PROFILES.vinyl_matte;
+    expect(vinylMatte).toBeDefined();
+    expect(vinylMatte.blackFloorL).toBeCloseTo(14.0, 1);
+    expect(vinylMatte.paperWhiteL).toBeCloseTo(94.0, 1);
+    expect(vinylMatte.recommendedToeLift).toBeGreaterThan(40);
+
+    // Matte coating scattering causes black to lift significantly compared to glossy vinyl
+    const [vmR, vmG, vmB] = simulatePrinterOutput(0, 0, 0, vinylMatte);
+    const [vmL] = rgbToLab(vmR, vmG, vmB);
+    expect(vmR).toBeGreaterThan(vgR);
+    expect(vmL).toBeGreaterThan(vgL);
+    expect(vmR).toBeGreaterThanOrEqual(13);
+  });
 });

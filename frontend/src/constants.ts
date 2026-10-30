@@ -84,6 +84,34 @@ export const PRINTER_PROFILES: Record<string, PrinterProfile> = {
     saturationMultiplier: 0.95,
     gamutClampStrength: 0.85,
     recommendedToeLift: 20
+  },
+  vinyl_glossy: {
+    id: 'vinyl_glossy',
+    name: 'Vinyl Sticker Glossy Paper',
+    badge: 'Impermeable / Razor Sharp Dmax',
+    description:
+      'Plastic base holds razor-sharp dots with zero droplet wicking and incredibly deep Dmax (L*_min = 5.0). Needs slight shadow/gamma lift to prevent heavy black ink pooling and smearing.',
+    blackFloorL: 5.0, // Minimum L* achievable on glossy vinyl
+    paperWhiteL: 97.5, // Crisp synthetic white point
+    shadowCrushThreshold: 14.0, // Low dot gain, sharp edge definition
+    shadowCrushStrength: 0.80,
+    saturationMultiplier: 0.96, // Wide gamut, punchy saturation
+    gamutClampStrength: 0.86,
+    recommendedToeLift: 22
+  },
+  vinyl_matte: {
+    id: 'vinyl_matte',
+    name: 'Vinyl Sticker Matte Paper',
+    badge: 'Synthetic Matte Hybrid / Elevated Gray',
+    description:
+      'Hybrid substrate: lacks fibrous wicking of cardstock but scatters ambient light (L*_min = 14.0). Requires heavy shadow/gamma lift to prevent dark artwork crushing into a flat gray block.',
+    blackFloorL: 14.0, // Matte coating scatters light into flat dark gray
+    paperWhiteL: 94.0, // Muted matte synthetic white
+    shadowCrushThreshold: 24.0, // Moderate dot gain and early shadow flattening
+    shadowCrushStrength: 0.50,
+    saturationMultiplier: 0.85, // Medium gamut with muted colors
+    gamutClampStrength: 0.68,
+    recommendedToeLift: 48
   }
 };
 
