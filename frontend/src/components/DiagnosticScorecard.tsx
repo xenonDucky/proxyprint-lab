@@ -62,7 +62,7 @@ export function DiagnosticScorecard({
             geom.isLikelyUpscaled
               ? 'Warning: High pixel count detected, but Laplacian edge gradient & 2D FFT high-frequency energy are low. This image appears upscaled from a low-res source.'
               : cardStandard.requiresBleed && !geom.has3mmBleed
-              ? 'Missing 3mm bleed margin for commercial cutting. Toggle "Add 3mm MPC Black Bleed Border" above.'
+              ? 'Missing 3mm bleed margin for commercial cutting. Set Bleed Margin in Section 2 to pad black borders.'
               : `Evaluated against 300 DPI minimum, 600 DPI ideal, and 1200 DPI maximum for both Art Box (${curMetrics.effectiveArtPpi} DPI) and Card Text Box (${curMetrics.effectiveTextPpi} DPI).`
           }
         />

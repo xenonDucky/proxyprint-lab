@@ -147,3 +147,50 @@ def test_dual_region_sharpening_and_dpi_benchmarks():
     min_dpi = compute_optimal_region_sharpening(300, 300)
     assert min_dpi["sharpen"] == 26.0
     assert min_dpi["textBoxSharpen"] == 14.0
+
+
+def test_dynamic_bleed_mm_pipeline_and_export():
+    card_bytes = create_synthetic_test_card(744, 1039, dark_art=True)
+    res_analyze = client.post(
+        "/api/analyze",
+        files={"file": ("tcg_card.png", card_bytes, "image/png")},
+        data={
+            "input_mode": "full_card",
+            "card_standard_id": "tcg_trim",
+            "printer_profile_id": "mpc_commercial",
+            "bleed_mm": "3.0",
+        },
+    )
+    assert res_analyze.status_code == 200
+    geom = res_analyze.json()["geometry"]
+    assert geom["bleedMm"] == 3.0
+    assert geom["has3mmBleed"] is True
+    assert geom["effectiveW"] == int(round(744 * (69.0 / 63.0)))
+    assert geom["effectiveH"] == int(round(1039 * (94.0 / 88.0)))
+
+    res_export = client.post(
+        "/api/export",
+        files={"file": ("tcg_card.png", card_bytes, "image/png")},
+        data={
+            "input_mode": "full_card",
+            "card_standard_id": "tcg_trim",
+            "bleed_mm": "3.0",
+        },
+    )
+    assert res_export.status_code == 200
+    out_img = Image.open(io.BytesIO(res_export.content))
+    assert out_img.width == int(round(744 * (69.0 / 63.0)))
+    assert out_img.height == int(round(1039 * (94.0 / 88.0)))
+
+    res_batch = client.post(
+        "/api/batch-export-zip",
+        files=[("files", ("tcg_card.png", card_bytes, "image/png"))],
+        data={
+            "input_mode": "full_card",
+            "card_standard_id": "tcg_trim",
+            "bleed_mm": "3.0",
+        },
+    )
+    assert res_batch.status_code == 200
+    assert res_batch.headers["content-type"] == "application/zip"
+

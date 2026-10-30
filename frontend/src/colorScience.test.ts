@@ -287,6 +287,24 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
       expect(paddedVm.textBoxNorm!.x).toBeGreaterThan(unpaddedVm.textBoxNorm!.x);
       expect(paddedVm.artBoxNorm.w).toBeLessThan(unpaddedVm.artBoxNorm.w);
       expect(paddedVm.textBoxNorm!.w).toBeLessThan(unpaddedVm.textBoxNorm!.w);
+
+      // 3. Evaluate with dynamic bleedMm: 3.0 on TCG standard trim
+      const dynamicBleedResult = runFullPrintPipeline({
+        sourceCanvas: trimCanvas,
+        inputMode: 'full_card',
+        cardStandard: CARD_STANDARDS.tcg_trim,
+        printerProfile: PRINTER_PROFILES.mpc_commercial,
+        adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0, textBoxSharpen: 0 },
+        bleedMm: 3.0
+      })!;
+
+      expect(dynamicBleedResult.geometry.bleedMm).toBe(3.0);
+      expect(dynamicBleedResult.geometry.has3mmBleed).toBe(true);
+      expect(dynamicBleedResult.geometry.effectiveW).toBe(Math.round(744 * (69.0 / 63.0)));
+      expect(dynamicBleedResult.geometry.effectiveH).toBe(Math.round(1039 * (94.0 / 88.0)));
+      const dynamicVm = dynamicBleedResult.current.visualMaps!;
+      expect(dynamicVm.artBoxNorm.x).toBeGreaterThan(unpaddedVm.artBoxNorm.x);
+      expect(dynamicVm.textBoxNorm!.x).toBeGreaterThan(unpaddedVm.textBoxNorm!.x);
     } finally {
       (globalThis as any).document = prevDoc;
     }

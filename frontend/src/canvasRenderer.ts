@@ -1,6 +1,6 @@
 import { applyUnsharpMaskRgba, sample3DLut, AdjustmentParams } from './colorScience';
 import { applyUserAdjustments } from './simulation';
-import { ViewMode, InputMode, PrinterProfile, PipelineAnalysisResult } from './types';
+import { ViewMode, InputMode, PrinterProfile, PipelineAnalysisResult, CardStandard } from './types';
 
 export interface CanvasRendererParams {
   sourceCanvas: HTMLCanvasElement | null;
@@ -9,8 +9,10 @@ export interface CanvasRendererParams {
   showGeometryGuides: boolean;
   adjustments: AdjustmentParams;
   printerProfile: PrinterProfile;
-  padMpcBleed: boolean;
+  padMpcBleed?: boolean;
+  bleedMm?: number;
   inputMode: InputMode | string;
+  cardStandard?: CardStandard;
   mainPreviewCanvas: HTMLCanvasElement | null;
   origCompareCanvas: HTMLCanvasElement | null;
   simCompareCanvas: HTMLCanvasElement | null;
@@ -24,8 +26,10 @@ export function renderPreviewCanvases({
   showGeometryGuides,
   adjustments,
   printerProfile,
-  padMpcBleed,
+  padMpcBleed = false,
+  bleedMm,
   inputMode,
+  cardStandard,
   mainPreviewCanvas,
   origCompareCanvas,
   simCompareCanvas,
@@ -40,12 +44,18 @@ export function renderPreviewCanvases({
   const rawW = sourceCanvas.width;
   const rawH = sourceCanvas.height;
   const isNativeBleed = Math.abs(rawW / rawH - 69 / 94) < 0.008;
+  const effectiveBleedMm = bleedMm !== undefined ? Math.max(0, bleedMm) : (padMpcBleed ? 3.0 : 0.0);
+  const baseW = cardStandard?.widthMm || 63.0;
+  const baseH = cardStandard?.heightMm || 88.0;
+
+  const padRatioX = effectiveBleedMm > 0 ? effectiveBleedMm / (baseW + 2 * effectiveBleedMm) : (3.0 / 69.0);
+  const padRatioY = effectiveBleedMm > 0 ? effectiveBleedMm / (baseH + 2 * effectiveBleedMm) : (3.0 / 94.0);
 
   const drawBaseImage = (ctx: CanvasRenderingContext2D, w: number, h: number) => {
     ctx.fillStyle = '#070709';
     ctx.fillRect(0, 0, w, h);
-    const px = (!isNativeBleed && padMpcBleed) ? Math.round(w * (3 / 69)) : 0;
-    const py = (!isNativeBleed && padMpcBleed) ? Math.round(h * (3 / 94)) : 0;
+    const px = (!isNativeBleed && effectiveBleedMm > 0) ? Math.round(w * padRatioX) : 0;
+    const py = (!isNativeBleed && effectiveBleedMm > 0) ? Math.round(h * padRatioY) : 0;
     ctx.drawImage(sourceCanvas, px, py, w - px * 2, h - py * 2);
   };
 
@@ -54,8 +64,8 @@ export function renderPreviewCanvases({
     ctx.save();
 
     const hasBleed = analysis.geometry.has3mmBleed;
-    const bleedPxX = hasBleed ? Math.round(w * (3 / 69)) : 0;
-    const bleedPxY = hasBleed ? Math.round(h * (3 / 94)) : 0;
+    const bleedPxX = hasBleed ? Math.round(w * padRatioX) : 0;
+    const bleedPxY = hasBleed ? Math.round(h * padRatioY) : 0;
 
     if (hasBleed) {
       ctx.strokeStyle = 'rgba(244, 63, 94, 0.85)';
@@ -77,11 +87,11 @@ export function renderPreviewCanvases({
     const trimSpanW = w - bleedPxX * 2;
     const trimSpanH = h - bleedPxY * 2;
     // MTG card frame black border is uniform in physical millimeters (~3mm on all 4 sides).
-    // In normalized trim space: Width margin is 0.048 (3mm / 63mm). Height margin is 0.048 * (63 / 88) = 0.03436 (3mm / 88mm).
+    // In normalized trim space: Width margin is 0.048 (3mm / 63mm). Height margin is 0.048 * (baseW / baseH).
     const safeOffsetX = bleedPxX + trimSpanW * 0.048;
-    const safeOffsetY = bleedPxY + trimSpanH * (0.048 * (63 / 88));
+    const safeOffsetY = bleedPxY + trimSpanH * (0.048 * (baseW / baseH));
     const safeWidth = trimSpanW * (1 - 2 * 0.048);
-    const safeHeight = trimSpanH * (1 - 2 * 0.048 * (63 / 88));
+    const safeHeight = trimSpanH * (1 - 2 * 0.048 * (baseW / baseH));
     const safeRadius = trimSpanW * 0.03;
 
     ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';

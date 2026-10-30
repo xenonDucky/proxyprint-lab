@@ -19,7 +19,8 @@ export interface RunPrintPipelineParams {
   cardStandard: CardStandard;
   printerProfile: PrinterProfile;
   adjustments: AdjustmentParams;
-  padMpcBleed: boolean;
+  padMpcBleed?: boolean;
+  bleedMm?: number;
 }
 
 export function runFullPrintPipeline({
@@ -28,18 +29,23 @@ export function runFullPrintPipeline({
   cardStandard,
   printerProfile,
   adjustments,
-  padMpcBleed
+  padMpcBleed = false,
+  bleedMm
 }: RunPrintPipelineParams): PipelineAnalysisResult | null {
   if (!sourceCanvas) return null;
 
   const rawW = sourceCanvas.width;
   const rawH = sourceCanvas.height;
 
+  const effectiveBleedMm = bleedMm !== undefined ? Math.max(0, bleedMm) : (padMpcBleed ? 3.0 : 0.0);
   const isNativeBleed = Math.abs(rawW / rawH - 69 / 94) < 0.008;
-  const has3mmBleed = isNativeBleed || padMpcBleed;
+  const has3mmBleed = isNativeBleed || effectiveBleedMm > 0;
 
-  const bleedFactorX = !isNativeBleed && padMpcBleed ? 69 / 63 : 1.0;
-  const bleedFactorY = !isNativeBleed && padMpcBleed ? 94 / 88 : 1.0;
+  const baseW = cardStandard.widthMm || 63.0;
+  const baseH = cardStandard.heightMm || 88.0;
+
+  const bleedFactorX = !isNativeBleed && effectiveBleedMm > 0 ? (baseW + 2 * effectiveBleedMm) / baseW : 1.0;
+  const bleedFactorY = !isNativeBleed && effectiveBleedMm > 0 ? (baseH + 2 * effectiveBleedMm) / baseH : 1.0;
   const effectiveW = Math.round(rawW * bleedFactorX);
   const effectiveH = Math.round(rawH * bleedFactorY);
 
@@ -53,8 +59,11 @@ export function runFullPrintPipeline({
   ctx.fillStyle = '#070709';
   ctx.fillRect(0, 0, AN_W, AN_H);
 
-  const padX = !isNativeBleed && padMpcBleed ? Math.round(AN_W * (3 / 69)) : 0;
-  const padY = !isNativeBleed && padMpcBleed ? Math.round(AN_H * (3 / 94)) : 0;
+  const padRatioX = effectiveBleedMm > 0 ? effectiveBleedMm / (baseW + 2 * effectiveBleedMm) : (3.0 / 69.0);
+  const padRatioY = effectiveBleedMm > 0 ? effectiveBleedMm / (baseH + 2 * effectiveBleedMm) : (3.0 / 94.0);
+
+  const padX = !isNativeBleed && effectiveBleedMm > 0 ? Math.round(AN_W * padRatioX) : 0;
+  const padY = !isNativeBleed && effectiveBleedMm > 0 ? Math.round(AN_H * padRatioY) : 0;
   ctx.drawImage(sourceCanvas, padX, padY, AN_W - padX * 2, AN_H - padY * 2);
 
   const rawImgData = ctx.getImageData(0, 0, AN_W, AN_H);
@@ -63,12 +72,15 @@ export function runFullPrintPipeline({
   // --------------------------------------------------------------------------
   // STAGE 1 & 2: RESOLUTION, BLEED GEOMETRY, LAPLACIAN & 2D FFT SHARPNESS
   // --------------------------------------------------------------------------
-  const ppiX = effectiveW / cardStandard.widthIn;
-  const ppiY = effectiveH / cardStandard.heightIn;
+  const targetWIn = (baseW + (isNativeBleed ? 6.0 : 2 * effectiveBleedMm)) / 25.4;
+  const targetHIn = (baseH + (isNativeBleed ? 6.0 : 2 * effectiveBleedMm)) / 25.4;
+  const ppiX = effectiveW / targetWIn;
+  const ppiY = effectiveH / targetHIn;
   const nominalPpi = Math.round(Math.min(ppiX, ppiY));
 
+  const targetAspect = (baseW + (isNativeBleed ? 6.0 : 2 * effectiveBleedMm)) / (baseH + (isNativeBleed ? 6.0 : 2 * effectiveBleedMm));
   const actualAspect = effectiveW / effectiveH;
-  const aspectDiffPct = (Math.abs(actualAspect - cardStandard.aspectRatio) / cardStandard.aspectRatio) * 100;
+  const aspectDiffPct = (Math.abs(actualAspect - targetAspect) / targetAspect) * 100;
 
   // Measure Laplacian Edge Gradient & 2D FFT High-Frequency Energy
   const sharpW = 120;
@@ -86,8 +98,8 @@ export function runFullPrintPipeline({
     gray[i] = 0.299 * sData[p] + 0.587 * sData[p + 1] + 0.114 * sData[p + 2];
   }
 
-  const sBleedX = has3mmBleed ? Math.round(sharpW * (3 / 69)) : 0;
-  const sBleedY = has3mmBleed ? Math.round(sharpH * (3 / 94)) : 0;
+  const sBleedX = has3mmBleed ? Math.round(sharpW * padRatioX) : 0;
+  const sBleedY = has3mmBleed ? Math.round(sharpH * padRatioY) : 0;
   const sTrimW = sharpW - sBleedX * 2;
   const sTrimH = sharpH - sBleedY * 2;
   const sAx0 = Math.floor(sBleedX + sTrimW * 0.078);
@@ -184,8 +196,8 @@ export function runFullPrintPipeline({
     const histOriginal = new Uint32Array(50);
     const histSimulated = new Uint32Array(50);
 
-    const bleedOffsetX = has3mmBleed ? AN_W * (3 / 69) : 0;
-    const bleedOffsetY = has3mmBleed ? AN_H * (3 / 94) : 0;
+    const bleedOffsetX = has3mmBleed ? Math.round(AN_W * padRatioX) : 0;
+    const bleedOffsetY = has3mmBleed ? Math.round(AN_H * padRatioY) : 0;
     const trimSpanW = AN_W - bleedOffsetX * 2;
     const trimSpanH = AN_H - bleedOffsetY * 2;
 
@@ -537,6 +549,7 @@ export function runFullPrintPipeline({
       fftSharpnessRatio: Math.round(fftSharpnessFactor * 100),
       isLikelyUpscaled,
       has3mmBleed,
+      bleedMm: effectiveBleedMm,
       aspectDiffPct: aspectDiffPct.toFixed(1)
     },
     anW: AN_W,

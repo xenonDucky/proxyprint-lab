@@ -62,9 +62,10 @@ def get_profiles():
 async def analyze_card_image(
     file: UploadFile = File(...),
     input_mode: str = Form("full_card"),
-    card_standard_id: str = Form("mpc_bleed"),
+    card_standard_id: str = Form("tcg_trim"),
     printer_profile_id: str = Form("mpc_commercial"),
     pad_mpc_bleed: bool = Form(False),
+    bleed_mm: float = Form(0.0),
     adjustments_json: Optional[str] = Form(None),
 ):
     """
@@ -85,6 +86,7 @@ async def analyze_card_image(
             printer_profile_id=printer_profile_id,
             adjustments=adjustments,
             pad_mpc_bleed=pad_mpc_bleed,
+            bleed_mm=bleed_mm,
         )
         return result
     except Exception as exc:
@@ -95,12 +97,14 @@ async def analyze_card_image(
 async def export_print_ready_png(
     file: UploadFile = File(...),
     input_mode: str = Form("full_card"),
+    card_standard_id: str = Form("tcg_trim"),
     pad_mpc_bleed: bool = Form(False),
+    bleed_mm: float = Form(0.0),
     adjustments_json: Optional[str] = Form(None),
 ):
     """
     Generate a full-resolution, color-compensated, print-ready PNG (300 DPI metadata)
-    with optional 3mm MPC bleed padding applied.
+    with optional bleed padding applied.
     In 'full_card' (Art Box Only) mode, only the Art Analysis Region is modified,
     keeping the black card border and text box untouched.
     """
@@ -110,12 +114,20 @@ async def export_print_ready_png(
         raw_rgb = np.array(pil_img, dtype=np.uint8)
         raw_h, raw_w, _ = raw_rgb.shape
 
-        out_w = int(round(raw_w * (69.0 / 63.0))) if pad_mpc_bleed else raw_w
-        out_h = int(round(raw_h * (94.0 / 88.0))) if pad_mpc_bleed else raw_h
+        card_standard = CARD_STANDARDS.get(card_standard_id, CARD_STANDARDS["tcg_trim"])
+        base_w_mm = float(card_standard["width_mm"])
+        base_h_mm = float(card_standard["height_mm"])
+
+        is_native_bleed = abs(raw_w / max(1, raw_h) - (69.0 / 94.0)) < 0.008
+        effective_bleed_mm = float(bleed_mm) if bleed_mm > 0.0 else (3.0 if pad_mpc_bleed else 0.0)
+        should_pad = not is_native_bleed and effective_bleed_mm > 0.0
+
+        out_w = int(round(raw_w * ((base_w_mm + 2.0 * effective_bleed_mm) / base_w_mm))) if should_pad else raw_w
+        out_h = int(round(raw_h * ((base_h_mm + 2.0 * effective_bleed_mm) / base_h_mm))) if should_pad else raw_h
 
         canvas_rgb = np.full((out_h, out_w, 3), [7, 7, 9], dtype=np.uint8)
-        px = int(round(out_w * (3.0 / 69.0))) if pad_mpc_bleed else 0
-        py = int(round(out_h * (3.0 / 94.0))) if pad_mpc_bleed else 0
+        px = int(round(out_w * (effective_bleed_mm / (base_w_mm + 2.0 * effective_bleed_mm)))) if should_pad else 0
+        py = int(round(out_h * (effective_bleed_mm / (base_h_mm + 2.0 * effective_bleed_mm)))) if should_pad else 0
         inner_w = out_w - px * 2
         inner_h = out_h - py * 2
 
@@ -138,13 +150,11 @@ async def export_print_ready_png(
         if adjustments_json:
             adj.update(json.loads(adjustments_json))
 
-        actual_aspect = out_w / max(1.0, float(out_h))
-        is_mpc_aspect = abs(actual_aspect - (69.0 / 94.0)) < abs(actual_aspect - (63.0 / 88.0))
-        has_bleed = pad_mpc_bleed or is_mpc_aspect
-        bx = out_w * (3.0 / 69.0) if has_bleed else 0.0
-        by = out_h * (3.0 / 94.0) if has_bleed else 0.0
-        tw = out_w - bx * 2.0
-        th = out_h - by * 2.0
+        has_bleed = is_native_bleed or effective_bleed_mm > 0.0
+        bx = int(round(out_w * (effective_bleed_mm / (base_w_mm + 2.0 * effective_bleed_mm)))) if has_bleed else 0
+        by = int(round(out_h * (effective_bleed_mm / (base_h_mm + 2.0 * effective_bleed_mm)))) if has_bleed else 0
+        tw = out_w - bx * 2
+        th = out_h - by * 2
         ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
         ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
         ty0, ty1 = int(np.floor(by + th * 0.614)), int(np.ceil(by + th * 0.889))
@@ -191,43 +201,35 @@ async def export_print_ready_png(
 async def batch_auto_optimize_and_export_zip(
     files: List[UploadFile] = File(...),
     input_mode: str = Form("full_card"),
-    card_standard_id: str = Form("mpc_bleed"),
+    card_standard_id: str = Form("tcg_trim"),
     printer_profile_id: str = Form("mpc_commercial"),
+    bleed_mm: float = Form(0.0),
 ):
     """
     Accept multiple card images, run the 6-Stage Analysis + Coordinate Pattern Search
-    auto-optimizer on each image, pad missing 3mm MPC bleed if required by the standard,
-    and return a single ZIP archive containing all print-ready 300 DPI PNGs and a
-    batch_report.json summary.
+    auto-optimizer on each image, pad bleed border if configured, and return a single
+    ZIP archive containing all print-ready 300 DPI PNGs and a batch_report.json summary.
     """
     try:
-        card_standard = CARD_STANDARDS.get(card_standard_id, CARD_STANDARDS["mpc_bleed"])
+        card_standard = CARD_STANDARDS.get(card_standard_id, CARD_STANDARDS["tcg_trim"])
+        base_w_mm = float(card_standard["width_mm"])
+        base_h_mm = float(card_standard["height_mm"])
+        is_native_bleed = card_standard.get("requires_bleed", False)
+        effective_bleed_mm = float(bleed_mm) if bleed_mm > 0.0 else (3.0 if is_native_bleed else 0.0)
+
         zip_buf = io.BytesIO()
         batch_report = []
 
         with zipfile.ZipFile(zip_buf, mode="w", compression=zipfile.ZIP_STORED) as zf:
             for idx, upload in enumerate(files):
                 img_bytes = await upload.read()
-                initial = run_full_backend_pipeline(
+                analysis = run_full_backend_pipeline(
                     image_bytes=img_bytes,
                     input_mode=input_mode,
                     card_standard_id=card_standard_id,
                     printer_profile_id=printer_profile_id,
-                    pad_mpc_bleed=False,
+                    bleed_mm=effective_bleed_mm,
                 )
-                should_pad = bool(
-                    card_standard["requires_bleed"] and not initial["geometry"]["has3mmBleed"]
-                )
-                if should_pad:
-                    analysis = run_full_backend_pipeline(
-                        image_bytes=img_bytes,
-                        input_mode=input_mode,
-                        card_standard_id=card_standard_id,
-                        printer_profile_id=printer_profile_id,
-                        pad_mpc_bleed=True,
-                    )
-                else:
-                    analysis = initial
 
                 opt_adj = analysis["recommendedAdjustments"]
 
@@ -235,12 +237,15 @@ async def batch_auto_optimize_and_export_zip(
                 raw_rgb = np.array(pil_img, dtype=np.uint8)
                 raw_h, raw_w, _ = raw_rgb.shape
 
-                out_w = int(round(raw_w * (69.0 / 63.0))) if should_pad else raw_w
-                out_h = int(round(raw_h * (94.0 / 88.0))) if should_pad else raw_h
+                img_is_native_bleed = abs(raw_w / max(1, raw_h) - (69.0 / 94.0)) < 0.008
+                card_should_pad = (effective_bleed_mm > 0.0) and not img_is_native_bleed and not is_native_bleed
+
+                out_w = int(round(raw_w * ((base_w_mm + 2.0 * effective_bleed_mm) / base_w_mm))) if card_should_pad else raw_w
+                out_h = int(round(raw_h * ((base_h_mm + 2.0 * effective_bleed_mm) / base_h_mm))) if card_should_pad else raw_h
 
                 canvas_rgb = np.full((out_h, out_w, 3), [7, 7, 9], dtype=np.uint8)
-                px = int(round(out_w * (3.0 / 69.0))) if should_pad else 0
-                py = int(round(out_h * (3.0 / 94.0))) if should_pad else 0
+                px = int(round(out_w * (effective_bleed_mm / (base_w_mm + 2.0 * effective_bleed_mm)))) if card_should_pad else 0
+                py = int(round(out_h * (effective_bleed_mm / (base_h_mm + 2.0 * effective_bleed_mm)))) if card_should_pad else 0
                 inner_w = out_w - px * 2
                 inner_h = out_h - py * 2
 
@@ -253,9 +258,9 @@ async def batch_auto_optimize_and_export_zip(
 
                 canvas_rgb[py : py + inner_h, px : px + inner_w] = inner_rgb
 
-                has_bleed = bool(analysis["geometry"]["has3mmBleed"] or should_pad)
-                bx = out_w * (3.0 / 69.0) if has_bleed else 0.0
-                by = out_h * (3.0 / 94.0) if has_bleed else 0.0
+                has_bleed = img_is_native_bleed or card_should_pad or is_native_bleed
+                bx = out_w * (effective_bleed_mm / (base_w_mm + 2.0 * effective_bleed_mm)) if (has_bleed and effective_bleed_mm > 0) else 0.0
+                by = out_h * (effective_bleed_mm / (base_h_mm + 2.0 * effective_bleed_mm)) if (has_bleed and effective_bleed_mm > 0) else 0.0
                 tw = out_w - bx * 2.0
                 th = out_h - by * 2.0
                 ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
@@ -295,10 +300,11 @@ async def batch_auto_optimize_and_export_zip(
                 batch_report.append(
                     {
                         "filename": out_filename,
-                        "padded3mmBleed": should_pad,
+                        "bleedMm": effective_bleed_mm,
+                        "paddedBleed": card_should_pad,
                         "appliedAdjustments": opt_adj,
-                        "baselineScore": initial["baseline"]["scores"]["overall"],
-                        "embarrassingBottleneck": initial["baseline"]["scores"]["bottleneckMetric"],
+                        "baselineScore": analysis["baseline"]["scores"]["overall"],
+                        "embarrassingBottleneck": analysis["baseline"]["scores"]["bottleneckMetric"],
                     }
                 )
 

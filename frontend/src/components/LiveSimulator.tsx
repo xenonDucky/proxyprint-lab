@@ -22,8 +22,6 @@ export interface LiveSimulatorProps {
   resetAdjustments: () => void;
   analysis: PipelineAnalysisResult;
   inputMode: InputMode | string;
-  padMpcBleed: boolean;
-  setPadMpcBleed: (pad: boolean) => void;
   handleSaveCurrentToBatch: () => void;
   batchSaveFlash: boolean;
   existingBatchMatch: BatchCardItem | null;
@@ -37,8 +35,6 @@ export function LiveSimulator({
   resetAdjustments,
   analysis,
   inputMode,
-  padMpcBleed,
-  setPadMpcBleed,
   handleSaveCurrentToBatch,
   batchSaveFlash,
   existingBatchMatch,
@@ -384,28 +380,6 @@ export function LiveSimulator({
               </p>
             </div>
           )}
-        </div>
-
-        {/* 3mm MPC Bleed Padding Toggle */}
-        <div className="pt-2 border-t border-slate-800 flex items-center justify-between">
-          <div>
-            <div className="text-xs font-semibold text-slate-200">
-              Add 3mm MPC Black Bleed Border
-            </div>
-            <div className="text-[11px] text-slate-400">
-              Pads trim-sized cards (63×88mm → 69×94mm) for die-cutting safety
-            </div>
-          </div>
-          <button
-            onClick={() => setPadMpcBleed(!padMpcBleed)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition cursor-pointer ${
-              padMpcBleed
-                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
-                : 'bg-slate-800 text-slate-400 border-slate-700'
-            }`}
-          >
-            {padMpcBleed ? 'Added (+3mm)' : 'Off'}
-          </button>
         </div>
 
         {/* Save / Overwrite Card in Batch Queue Action */}

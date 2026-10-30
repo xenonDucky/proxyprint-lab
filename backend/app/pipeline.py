@@ -558,10 +558,11 @@ def optimize_adjustments_coordinate_search(
 def run_full_backend_pipeline(
     image_bytes: bytes,
     input_mode: str = "full_card",
-    card_standard_id: str = "mpc_bleed",
+    card_standard_id: str = "tcg_trim",
     printer_profile_id: str = "mpc_commercial",
     adjustments: Optional[Dict[str, float]] = None,
     pad_mpc_bleed: bool = False,
+    bleed_mm: float = 0.0,
 ) -> Dict[str, Any]:
     """
     Execute the complete 6-Stage Heavy Analysis Pipeline on an uploaded image:
@@ -578,23 +579,32 @@ def run_full_backend_pipeline(
             "saturation": 0.0,
         }
 
-    card_standard = CARD_STANDARDS.get(card_standard_id, CARD_STANDARDS["mpc_bleed"])
+    card_standard = CARD_STANDARDS.get(card_standard_id, CARD_STANDARDS["tcg_trim"])
     printer_profile = PRINTER_PROFILES.get(printer_profile_id, PRINTER_PROFILES["mpc_commercial"])
 
     pil_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     raw_rgb = np.array(pil_img, dtype=np.uint8)
     raw_h, raw_w, _ = raw_rgb.shape
 
-    bleed_factor_x = 69.0 / 63.0 if pad_mpc_bleed else 1.0
-    bleed_factor_y = 94.0 / 88.0 if pad_mpc_bleed else 1.0
+    base_w_mm = float(card_standard["width_mm"])
+    base_h_mm = float(card_standard["height_mm"])
+
+    is_native_bleed = abs(raw_w / max(1, raw_h) - (69.0 / 94.0)) < 0.008
+    effective_bleed_mm = float(bleed_mm) if bleed_mm > 0.0 else (3.0 if (pad_mpc_bleed or is_native_bleed) else 0.0)
+
+    bleed_factor_x = (base_w_mm + 2.0 * effective_bleed_mm) / base_w_mm if (not is_native_bleed and effective_bleed_mm > 0) else 1.0
+    bleed_factor_y = (base_h_mm + 2.0 * effective_bleed_mm) / base_h_mm if (not is_native_bleed and effective_bleed_mm > 0) else 1.0
     effective_w = int(round(raw_w * bleed_factor_x))
     effective_h = int(round(raw_h * bleed_factor_y))
 
     # Build 240x330 working analysis image
     an_w, an_h = 240, 330
     work_rgb = np.full((an_h, an_w, 3), [7, 7, 9], dtype=np.uint8)
-    pad_x = int(round(an_w * (3.0 / 69.0))) if pad_mpc_bleed else 0
-    pad_y = int(round(an_h * (3.0 / 94.0))) if pad_mpc_bleed else 0
+    pad_ratio_x = effective_bleed_mm / (base_w_mm + 2.0 * effective_bleed_mm) if effective_bleed_mm > 0 else (3.0 / 69.0)
+    pad_ratio_y = effective_bleed_mm / (base_h_mm + 2.0 * effective_bleed_mm) if effective_bleed_mm > 0 else (3.0 / 94.0)
+
+    pad_x = int(round(an_w * pad_ratio_x)) if (not is_native_bleed and effective_bleed_mm > 0) else 0
+    pad_y = int(round(an_h * pad_ratio_y)) if (not is_native_bleed and effective_bleed_mm > 0) else 0
     inner_w = an_w - pad_x * 2
     inner_h = an_h - pad_y * 2
 
@@ -602,21 +612,19 @@ def run_full_backend_pipeline(
     work_rgb[pad_y : pad_y + inner_h, pad_x : pad_x + inner_w] = resized_inner
 
     # Stage 1 & 2: Resolution, Bleed Check, Laplacian Edge Variance & 2D FFT Sharpness
-    # Benchmarks: Min = 300 DPI, Ideal = 600 DPI, Max = 1200 DPI
-    ppi_x = effective_w / float(card_standard["width_in"])
-    ppi_y = effective_h / float(card_standard["height_in"])
+    target_w_in = (base_w_mm + (6.0 if is_native_bleed else 2.0 * effective_bleed_mm)) / 25.4
+    target_h_in = (base_h_mm + (6.0 if is_native_bleed else 2.0 * effective_bleed_mm)) / 25.4
+    ppi_x = effective_w / target_w_in
+    ppi_y = effective_h / target_h_in
     nominal_ppi = min(1200, int(round(min(ppi_x, ppi_y))))
 
+    target_aspect = (base_w_mm + (6.0 if is_native_bleed else 2.0 * effective_bleed_mm)) / (base_h_mm + (6.0 if is_native_bleed else 2.0 * effective_bleed_mm))
     actual_aspect = effective_w / max(1.0, float(effective_h))
-    std_aspect = float(card_standard["aspect_ratio"])
-    aspect_diff_pct = (abs(actual_aspect - std_aspect) / std_aspect) * 100.0
+    aspect_diff_pct = (abs(actual_aspect - target_aspect) / target_aspect) * 100.0
 
-    # Outer 3mm bleed border vs. inner 3mm black frame border check:
-    # A standard 63x88mm trim card already has a ~3mm black border, so checking only
-    # the outer 3mm ring falsely flags trim cards as having 3mm bleed and shrinks the Art Box!
-    # A card with true 3mm bleed has ~6mm of dark border (3mm bleed + 3mm frame border).
-    edge_band_x = max(4, int(round(an_w * (3.0 / 69.0))))
-    edge_band_y = max(4, int(round(an_h * (3.0 / 94.0))))
+    # Outer bleed border vs. inner black frame border check
+    edge_band_x = max(4, int(round(an_w * pad_ratio_x)))
+    edge_band_y = max(4, int(round(an_h * pad_ratio_y)))
     inner_band_x = max(8, int(round(an_w * (5.5 / 69.0))))
     inner_band_y = max(8, int(round(an_h * (5.5 / 94.0))))
     L_work, _, _ = srgb_to_lab(work_rgb)
@@ -638,12 +646,11 @@ def run_full_backend_pipeline(
     inner_ring_dark_ratio = float(
         np.sum(L_work[inner_ring_mask] < 14.0) / max(1, np.sum(inner_ring_mask))
     )
-    is_mpc_aspect = abs(actual_aspect - (69.0 / 94.0)) < abs(actual_aspect - (63.0 / 88.0))
 
     has_3mm_bleed = bool(
-        pad_mpc_bleed
+        effective_bleed_mm > 0.0
+        or is_native_bleed
         or (outer_border_dark_ratio > 0.85 and inner_ring_dark_ratio > 0.72)
-        or (is_mpc_aspect and effective_w >= 800 and effective_h >= 1090 and outer_border_dark_ratio > 0.75)
     )
 
     # Full/High-Res Laplacian + 2D FFT High-Frequency Sharpness Check aligned with Art Box & Text Box
@@ -762,6 +769,7 @@ def run_full_backend_pipeline(
             "fftSharpnessRatio": int(round(fft_factor * 100)),
             "isLikelyUpscaled": is_likely_upscaled,
             "has3mmBleed": has_3mm_bleed,
+            "bleedMm": effective_bleed_mm,
             "aspectDiffPct": f"{aspect_diff_pct:.1f}",
         },
         "baseline": baseline_result,

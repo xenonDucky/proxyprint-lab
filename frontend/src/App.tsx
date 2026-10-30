@@ -51,7 +51,7 @@ export default function App() {
   const batchFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [inputMode, setInputMode] = useState<InputMode | string>('full_card');
-  const [cardStandardId, setCardStandardId] = useState('mpc_bleed');
+  const [cardStandardId, setCardStandardId] = useState('tcg_trim');
   const [printerProfileId, setPrinterProfileId] = useState('mpc_commercial');
 
   const [adjustments, setAdjustments] = useState<AdjustmentParams>({
@@ -65,7 +65,7 @@ export default function App() {
     artTargetDpi: DPI_BENCHMARKS.min,
     textTargetDpi: DPI_BENCHMARKS.min
   });
-  const [padMpcBleed, setPadMpcBleed] = useState(false);
+  const [bleedMm, setBleedMm] = useState<number>(3);
 
   const [viewMode, setViewMode] = useState<ViewMode>('three_way');
   const [showGeometryGuides, setShowGeometryGuides] = useState(true);
@@ -109,7 +109,6 @@ export default function App() {
       artTargetDpi: DPI_BENCHMARKS.min,
       textTargetDpi: DPI_BENCHMARKS.min
     });
-    setPadMpcBleed(false);
   }, [activePresetId]);
 
   const handleImageUpload = useCallback((file?: File) => {
@@ -138,7 +137,6 @@ export default function App() {
           artTargetDpi: DPI_BENCHMARKS.min,
           textTargetDpi: DPI_BENCHMARKS.min
         });
-        setPadMpcBleed(false);
       };
       img.src = e.target?.result as string;
     };
@@ -154,9 +152,9 @@ export default function App() {
       cardStandard,
       printerProfile,
       adjustments,
-      padMpcBleed
+      bleedMm
     });
-  }, [sourceCanvas, inputMode, cardStandard, printerProfile, adjustments, padMpcBleed]);
+  }, [sourceCanvas, inputMode, cardStandard, printerProfile, adjustments, bleedMm]);
 
   // Render visual inspection canvases at 60 FPS using the 3D LUT
   useEffect(() => {
@@ -167,7 +165,8 @@ export default function App() {
       showGeometryGuides,
       adjustments,
       printerProfile,
-      padMpcBleed,
+      bleedMm,
+      cardStandard,
       inputMode,
       mainPreviewCanvas: mainPreviewCanvasRef.current,
       origCompareCanvas: origCompareCanvasRef.current,
@@ -181,23 +180,19 @@ export default function App() {
     showGeometryGuides,
     adjustments,
     printerProfile,
-    padMpcBleed,
+    bleedMm,
+    cardStandard,
     inputMode
   ]);
 
   const handleAutoOptimize = () => {
     if (!analysis) return;
 
-    const nextPadBleed = cardStandard.requiresBleed && !analysis.geometry.has3mmBleed ? true : padMpcBleed;
-    if (nextPadBleed !== padMpcBleed) {
-      setPadMpcBleed(nextPadBleed);
-    }
-
     const optimalParams = optimizePrintAdjustments({
       rawPixels: analysis.rawAnalysisPixels,
       anW: analysis.anW,
       anH: analysis.anH,
-      has3mmBleed: analysis.geometry.has3mmBleed || nextPadBleed,
+      has3mmBleed: analysis.geometry.has3mmBleed || bleedMm > 0,
       inputMode,
       printerProfile,
       printer3DLut: analysis.printer3DLut,
@@ -214,10 +209,12 @@ export default function App() {
     if (!sourceCanvas || !analysis) return;
     const outCanvas = renderCardToPrintReadyCanvas(
       sourceCanvas,
-      padMpcBleed,
+      bleedMm > 0,
       analysis.geometry.has3mmBleed,
       inputMode,
-      adjustments
+      adjustments,
+      bleedMm,
+      cardStandard
     );
 
     const link = document.createElement('a');
@@ -246,42 +243,20 @@ export default function App() {
           sharpen: 0,
           textBoxSharpen: 0
         },
-        padMpcBleed: false
+        bleedMm
       })!;
 
-      const shouldPadBleed =
-        cardStandard.requiresBleed && !initialAnalysis.geometry.has3mmBleed;
-
-      const workingAnalysis = shouldPadBleed
-        ? runFullPrintPipeline({
-            sourceCanvas: c,
-            inputMode,
-            cardStandard,
-            printerProfile,
-            adjustments: {
-              shadowLift: 0,
-              gamma: 1.0,
-              brightness: 0,
-              contrast: 0,
-              saturation: 0,
-              sharpen: 0,
-              textBoxSharpen: 0
-            },
-            padMpcBleed: true
-          })!
-        : initialAnalysis;
-
       const optParams = optimizePrintAdjustments({
-        rawPixels: workingAnalysis.rawAnalysisPixels,
-        anW: workingAnalysis.anW,
-        anH: workingAnalysis.anH,
-        has3mmBleed: workingAnalysis.geometry.has3mmBleed,
+        rawPixels: initialAnalysis.rawAnalysisPixels,
+        anW: initialAnalysis.anW,
+        anH: initialAnalysis.anH,
+        has3mmBleed: initialAnalysis.geometry.has3mmBleed || bleedMm > 0,
         inputMode,
         printerProfile,
-        printer3DLut: workingAnalysis.printer3DLut,
-        resolutionScore: workingAnalysis.resolutionScore,
-        artOpticalPpi: workingAnalysis.geometry.effectiveOpticalPpi,
-        textOpticalPpi: workingAnalysis.geometry.textOpticalPpi,
+        printer3DLut: initialAnalysis.printer3DLut,
+        resolutionScore: initialAnalysis.resolutionScore,
+        artOpticalPpi: initialAnalysis.geometry.effectiveOpticalPpi,
+        textOpticalPpi: initialAnalysis.geometry.textOpticalPpi,
         applyUserAdjustmentsFn: applyUserAdjustments
       });
 
@@ -291,23 +266,26 @@ export default function App() {
         cardStandard,
         printerProfile,
         adjustments: optParams,
-        padMpcBleed: shouldPadBleed
+        bleedMm
       })!;
 
       const thumbs = generateBatchThumbnails(
         c,
-        shouldPadBleed,
+        bleedMm > 0,
         finalAnalysis.geometry.has3mmBleed,
         inputMode,
         optParams,
-        finalAnalysis.printer3DLut
+        finalAnalysis.printer3DLut,
+        bleedMm,
+        cardStandard
       );
 
       return {
         id,
         fileName,
         sourceCanvas: c,
-        padBleed: shouldPadBleed,
+        padBleed: bleedMm > 0,
+        bleedMm,
         adjustments: optParams,
         baselineScores: initialAnalysis.baseline.scores,
         optimizedScores: finalAnalysis.current.scores,
@@ -316,16 +294,16 @@ export default function App() {
         simThumbUrl: thumbs.simThumbUrl
       };
     },
-    [inputMode, cardStandard, printerProfile]
+    [inputMode, cardStandard, printerProfile, bleedMm]
   );
 
-  // Re-optimize existing batch items whenever inputMode, cardStandard, or printerProfile changes
+  // Re-optimize existing batch items whenever inputMode, cardStandard, printerProfile, or bleedMm changes
   useEffect(() => {
     if (batchItems.length === 0) return;
     setBatchItems((prev) =>
       prev.map((item) => buildOptimizedBatchItem(item.sourceCanvas, item.fileName, item.id))
     );
-  }, [inputMode, cardStandardId, printerProfileId]);
+  }, [inputMode, cardStandardId, printerProfileId, bleedMm]);
 
   // Handle multi-file upload in Batch Auto-Adjust mode
   const handleBatchFilesUpload = useCallback(
@@ -397,7 +375,9 @@ export default function App() {
             item.padBleed,
             item.geometry.has3mmBleed,
             inputMode,
-            item.adjustments
+            item.adjustments,
+            item.bleedMm ?? bleedMm,
+            cardStandard
           );
           const dataUrl = outCanvas.toDataURL('image/png');
           const bytes = dataUrlToUint8Array(dataUrl);
@@ -427,7 +407,9 @@ export default function App() {
     setCustomFileName(item.fileName);
     setEditingBatchItemId(item.id);
     setSourceCanvas(item.sourceCanvas);
-    setPadMpcBleed(item.padBleed);
+    if (item.bleedMm !== undefined) {
+      setBleedMm(item.bleedMm);
+    }
     setAdjustments({
       shadowLift: item.adjustments.shadowLift,
       gamma: item.adjustments.gamma,
@@ -462,11 +444,13 @@ export default function App() {
     const currentName = customFileName || (activePresetId ? `${activePresetId}.png` : 'mtg_proxy.png');
     const thumbs = generateBatchThumbnails(
       sourceCanvas,
-      padMpcBleed,
+      bleedMm > 0,
       analysis.geometry.has3mmBleed,
       inputMode,
       adjustments,
-      analysis.printer3DLut
+      analysis.printer3DLut,
+      bleedMm,
+      cardStandard
     );
 
     const targetId = existingBatchMatch ? existingBatchMatch.id : `${Date.now()}_${currentName}`;
@@ -474,7 +458,8 @@ export default function App() {
       id: targetId,
       fileName: currentName,
       sourceCanvas,
-      padBleed: padMpcBleed,
+      padBleed: bleedMm > 0,
+      bleedMm,
       adjustments: { ...adjustments },
       baselineScores: analysis.baseline.scores,
       optimizedScores: analysis.current.scores,
@@ -510,7 +495,6 @@ export default function App() {
       artTargetDpi: DPI_BENCHMARKS.min,
       textTargetDpi: DPI_BENCHMARKS.min
     });
-    setPadMpcBleed(false);
   };
 
   const hasAnyAdjustment =
@@ -522,8 +506,7 @@ export default function App() {
     (adjustments.sharpen || 0) !== 0 ||
     (adjustments.textBoxSharpen || 0) !== 0 ||
     (adjustments.artTargetDpi ?? DPI_BENCHMARKS.min) > DPI_BENCHMARKS.min ||
-    (adjustments.textTargetDpi ?? DPI_BENCHMARKS.min) > DPI_BENCHMARKS.min ||
-    padMpcBleed;
+    (adjustments.textTargetDpi ?? DPI_BENCHMARKS.min) > DPI_BENCHMARKS.min;
 
   if (!analysis) {
     return (
@@ -577,6 +560,8 @@ export default function App() {
             setInputMode={setInputMode}
             cardStandardId={cardStandardId}
             setCardStandardId={setCardStandardId}
+            bleedMm={bleedMm}
+            setBleedMm={setBleedMm}
             printerProfileId={printerProfileId}
             setPrinterProfileId={setPrinterProfileId}
           />
@@ -624,8 +609,6 @@ export default function App() {
                 resetAdjustments={resetAdjustments}
                 analysis={analysis}
                 inputMode={inputMode}
-                padMpcBleed={padMpcBleed}
-                setPadMpcBleed={setPadMpcBleed}
                 handleSaveCurrentToBatch={handleSaveCurrentToBatch}
                 batchSaveFlash={batchSaveFlash}
                 existingBatchMatch={existingBatchMatch}

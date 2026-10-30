@@ -65,6 +65,7 @@ export interface GeometryResult {
   fftSharpnessRatio: number;
   isLikelyUpscaled: boolean;
   has3mmBleed: boolean;
+  bleedMm?: number;
   aspectDiffPct: string;
 }
 
@@ -147,6 +148,7 @@ export interface BatchCardItem {
   fileName: string;
   sourceCanvas: HTMLCanvasElement;
   padBleed: boolean;
+  bleedMm?: number;
   adjustments: AdjustmentParams;
   baselineScores: StageScores;
   optimizedScores: StageScores;
