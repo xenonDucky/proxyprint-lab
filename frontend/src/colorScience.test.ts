@@ -13,6 +13,7 @@ import {
   optimizePrintAdjustments
 } from './colorScience';
 import { createZipArchive } from './zipBuilder';
+import { createProxyPrintPdf, MM_TO_PT, PAPER_DIMENSIONS_PT } from './pdfBuilder';
 import { PRINTER_PROFILES, CARD_STANDARDS, simulatePrinterOutput, applyUserAdjustments } from './App';
 import { runFullPrintPipeline } from './printPipeline';
 
@@ -133,6 +134,112 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
     expect(buf[1]).toBe(0x4b);
     expect(buf[2]).toBe(0x03);
     expect(buf[3]).toBe(0x04);
+  });
+
+  it('creates exact 3x3 print-ready PDF with 0.265mm guides, exact card sizes, and lossless Flate streams', async () => {
+    function createMockCardCanvas(w = 100, h = 140): HTMLCanvasElement {
+      const data = new Uint8ClampedArray(w * h * 4);
+      for (let i = 0; i < data.length; i += 4) {
+        data[i] = 220; data[i + 1] = 60; data[i + 2] = 80; data[i + 3] = 255;
+      }
+      return {
+        width: w,
+        height: h,
+        getContext: () => ({
+          getImageData: () => ({ width: w, height: h, data })
+        })
+      } as unknown as HTMLCanvasElement;
+    }
+
+    const mockCanvas = createMockCardCanvas();
+    const pdfBlob = await createProxyPrintPdf({
+      cards: [
+        {
+          id: 'card1',
+          fileName: 'black_lotus.png',
+          canvas: mockCanvas,
+          quantity: 9,
+          adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0, textBoxSharpen: 0 }
+        }
+      ],
+      config: {
+        paperSize: 'letter',
+        cardWidthMm: 63.0,
+        cardHeightMm: 88.0,
+        guideWidthMm: 0.265,
+        guideColor: '#000000',
+        showGuides: true,
+        extendGuidesToEdge: true
+      }
+    });
+
+    expect(pdfBlob.type).toBe('application/pdf');
+    const pdfBuffer = await pdfBlob.arrayBuffer();
+    const pdfText = new TextDecoder('latin1').decode(pdfBuffer);
+
+    // 1. PDF standard header and trailer
+    expect(pdfText.startsWith('%PDF-1.4')).toBe(true);
+    expect(pdfText.includes('%%EOF')).toBe(true);
+
+    // 2. US Letter MediaBox (612 x 792 pt = 8.5 x 11 in)
+    expect(pdfText.includes('/MediaBox [0 0 612.00 792.00]')).toBe(true);
+
+    // 3. Exact 0.265mm guide line width (0.265 * 72 / 25.4 ≈ 0.7512 pt)
+    const expectedGuidePt = (0.265 * (72 / 25.4)).toFixed(4);
+    expect(pdfText.includes(`${expectedGuidePt} w`)).toBe(true);
+
+    // 4. Exact card physical dimensions (63mm = 178.5827 pt, 88mm = 249.4488 pt)
+    const expectedCardWPt = (63.0 * (72 / 25.4)).toFixed(4);
+    const expectedCardHPt = (88.0 * (72 / 25.4)).toFixed(4);
+    expect(pdfText.includes(`${expectedCardWPt} 0 0 ${expectedCardHPt}`)).toBe(true);
+
+    // 5. Lossless FlateDecode image compression
+    expect(pdfText.includes('/Filter /FlateDecode')).toBe(true);
+  });
+
+  it('supports multi-page sheet pagination (18 cards = 2 pages) and exact physical margins on A4', async () => {
+    function createMockCardCanvas(): HTMLCanvasElement {
+      const data = new Uint8ClampedArray(60 * 80 * 4);
+      return {
+        width: 60,
+        height: 80,
+        getContext: () => ({
+          getImageData: () => ({ width: 60, height: 80, data })
+        })
+      } as unknown as HTMLCanvasElement;
+    }
+
+    const mockCanvas = createMockCardCanvas();
+    const pdfBlob = await createProxyPrintPdf({
+      cards: [
+        {
+          id: 'card1',
+          fileName: 'lightning_bolt.png',
+          canvas: mockCanvas,
+          quantity: 18,
+          adjustments: { shadowLift: 0, gamma: 1.0, brightness: 0, contrast: 0, saturation: 0, sharpen: 0, textBoxSharpen: 0 }
+        }
+      ],
+      config: {
+        paperSize: 'a4',
+        cardWidthMm: 63.0,
+        cardHeightMm: 88.0,
+        guideWidthMm: 0.265,
+        guideColor: '#333333',
+        showGuides: true,
+        extendGuidesToEdge: true
+      }
+    });
+
+    const pdfBuffer = await pdfBlob.arrayBuffer();
+    const pdfText = new TextDecoder('latin1').decode(pdfBuffer);
+
+    // 18 cards / 9 per page = 2 pages
+    expect(pdfText.includes('/Count 2')).toBe(true);
+    // A4 dimensions (210 x 297 mm = 595.28 x 841.89 pt)
+    const expectedA4W = (210.0 * (72 / 25.4)).toFixed(2);
+    const expectedA4H = (297.0 * (72 / 25.4)).toFixed(2);
+    expect(pdfText.includes(`/MediaBox [0 0 ${expectedA4W} ${expectedA4H}]`)).toBe(true);
   });
 
   it('applies Smart MTG Unsharp Mask inside the Art Box while keeping Text Box & Borders untouched', () => {

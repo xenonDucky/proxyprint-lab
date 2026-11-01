@@ -1,6 +1,6 @@
 import { AdjustmentParams } from './colorScience';
 
-export type StudioMode = 'single' | 'batch';
+export type StudioMode = 'single' | 'batch' | 'pdf';
 
 export type ViewMode =
   | 'three_way'
@@ -155,4 +155,17 @@ export interface BatchCardItem {
   geometry: GeometryResult;
   origThumbUrl: string;
   simThumbUrl: string;
+}
+
+export interface PdfCardItem {
+  id: string;
+  batchItemId: string;
+  fileName: string;
+  sourceCanvas: HTMLCanvasElement;
+  renderedCanvas: HTMLCanvasElement;
+  thumbUrl: string;
+  quantity: number;
+  adjustments: AdjustmentParams;
+  cardStandard: CardStandard;
+  bleedMm: number;
 }

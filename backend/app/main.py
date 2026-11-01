@@ -14,6 +14,7 @@ from PIL import Image
 from .constants import CARD_STANDARDS, PRINTER_PROFILES
 from .color_science import apply_user_adjustments, generate_printer_3d_lut
 from .pipeline import run_full_backend_pipeline
+from .pdf_generator import create_3x3_pdf_sheet
 
 app = FastAPI(
     title="ProxyPrint Lab API",
@@ -319,3 +320,99 @@ async def batch_auto_optimize_and_export_zip(
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Batch ZIP export failed: {str(exc)}") from exc
+
+
+@app.post("/api/generate-pdf")
+async def generate_pdf_endpoint(
+    files: List[UploadFile] = File(...),
+    input_mode: str = Form("full_card"),
+    card_standard_id: str = Form("tcg_trim"),
+    printer_profile_id: str = Form("mpc_commercial"),
+    paper_size: str = Form("letter"),
+    guide_width_mm: float = Form(0.265),
+    show_guides: bool = Form(True),
+    extend_guides: bool = Form(True),
+):
+    """
+    Generate an ISO 32000-1 compliant multi-page PDF sheet with 9 cards per page in a centered 3x3 grid,
+    vector cutting guides (0.265mm), exact card dimensions, and lossless FlateDecode image compression.
+    """
+    try:
+        card_standard = CARD_STANDARDS.get(card_standard_id, CARD_STANDARDS["tcg_trim"])
+        base_w_mm = float(card_standard["width_mm"])
+        base_h_mm = float(card_standard["height_mm"])
+
+        processed_cards_rgb = []
+        for upload in files:
+            img_bytes = await upload.read()
+            analysis = run_full_backend_pipeline(
+                image_bytes=img_bytes,
+                input_mode=input_mode,
+                card_standard_id=card_standard_id,
+                printer_profile_id=printer_profile_id,
+            )
+            opt_adj = analysis["recommendedAdjustments"]
+
+            pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+            raw_rgb = np.array(pil_img, dtype=np.uint8)
+            raw_h, raw_w, _ = raw_rgb.shape
+
+            has_bleed = abs(raw_w / max(1, raw_h) - (69.0 / 94.0)) < 0.008
+            bx = raw_w * (3.0 / 69.0) if has_bleed else 0.0
+            by = raw_h * (3.0 / 94.0) if has_bleed else 0.0
+            tw = raw_w - bx * 2.0
+            th = raw_h - by * 2.0
+            ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
+            ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
+            ty0, ty1 = int(np.floor(by + th * 0.614)), int(np.ceil(by + th * 0.889))
+
+            if input_mode == "artwork_only":
+                comp_rgb = apply_user_adjustments(raw_rgb, opt_adj)
+            else:
+                comp_rgb = raw_rgb.copy()
+                comp_rgb[ay0 : ay1 + 1, ax0 : ax1 + 1] = apply_user_adjustments(
+                    raw_rgb[ay0 : ay1 + 1, ax0 : ax1 + 1], opt_adj
+                )
+
+            text_box_sharpen = float(opt_adj.get("textBoxSharpen", 0.0))
+            if text_box_sharpen > 0.0:
+                comp_rgb[ty0 : ty1 + 1, ax0 : ax1 + 1] = apply_user_adjustments(
+                    comp_rgb[ty0 : ty1 + 1, ax0 : ax1 + 1],
+                    {
+                        "sharpen": text_box_sharpen,
+                        "shadowLift": 0.0,
+                        "gamma": 1.0,
+                        "brightness": 0.0,
+                        "contrast": 0.0,
+                        "saturation": 0.0,
+                    },
+                )
+
+            if has_bleed:
+                bx_int = int(round(bx))
+                by_int = int(round(by))
+                trim_rgb = comp_rgb[by_int : raw_h - by_int, bx_int : raw_w - bx_int]
+            else:
+                trim_rgb = comp_rgb
+
+            processed_cards_rgb.append(trim_rgb)
+
+        pdf_bytes = create_3x3_pdf_sheet(
+            card_rgb_list=processed_cards_rgb,
+            paper_size=paper_size,
+            card_width_mm=base_w_mm,
+            card_height_mm=base_h_mm,
+            guide_width_mm=guide_width_mm,
+            show_guides=show_guides,
+            extend_guides_to_edge=extend_guides,
+        )
+
+        return Response(
+            content=pdf_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'attachment; filename="proxyprint_sheet_{paper_size}_{len(files)}cards.pdf"'
+            },
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"PDF generation failed: {str(exc)}") from exc

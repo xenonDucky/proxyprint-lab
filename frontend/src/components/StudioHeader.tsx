@@ -8,7 +8,8 @@ import {
   Plus,
   Download,
   Server,
-  Cpu
+  Cpu,
+  FileSpreadsheet
 } from 'lucide-react';
 import { StudioMode, BatchCardItem } from '../types';
 import { getScoreBadgeStyle } from '../constants';
@@ -18,6 +19,7 @@ export interface StudioHeaderProps {
   setStudioMode: (mode: StudioMode) => void;
   backendStatus: 'checking' | 'connected' | 'local';
   batchItems: BatchCardItem[];
+  pdfCardCount?: number;
   overallScore: number;
   baseOverallScore: number;
   hasAnyAdjustment: boolean;
@@ -37,6 +39,7 @@ export function StudioHeader({
   setStudioMode,
   backendStatus,
   batchItems,
+  pdfCardCount = 0,
   overallScore,
   baseOverallScore,
   hasAnyAdjustment,
@@ -121,6 +124,22 @@ export function StudioHeader({
               {batchItems.length > 0 && (
                 <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
                   {batchItems.length}
+                </span>
+              )}
+            </button>
+            <button
+              onClick={() => setStudioMode('pdf')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer ${
+                studioMode === 'pdf'
+                  ? 'bg-indigo-600 text-white shadow'
+                  : 'text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5" />
+              PDF Generator
+              {pdfCardCount > 0 && (
+                <span className="ml-0.5 px-1.5 py-0.2 rounded-full text-[10px] font-extrabold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+                  {pdfCardCount}
                 </span>
               )}
             </button>

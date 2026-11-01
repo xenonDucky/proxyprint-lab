@@ -94,6 +94,61 @@ export function renderCardToPrintReadyCanvas(
   return outCanvas;
 }
 
+export function renderCardForPdfSheet(
+  sourceCanvas: HTMLCanvasElement,
+  inputMode: string,
+  adjustments: AdjustmentParams,
+  bleedMm: number = 0,
+  cardStandard?: CardStandard,
+  trimToCutSize: boolean = true
+): HTMLCanvasElement {
+  const fullPrintCanvas = renderCardToPrintReadyCanvas(
+    sourceCanvas,
+    bleedMm > 0,
+    false,
+    inputMode,
+    adjustments,
+    bleedMm,
+    cardStandard
+  );
+
+  const rawW = sourceCanvas.width;
+  const rawH = sourceCanvas.height;
+  const isNativeBleed = Math.abs(rawW / rawH - 69 / 94) < 0.008;
+  const hasBleed = isNativeBleed || bleedMm > 0;
+
+  if (trimToCutSize && hasBleed) {
+    const baseW = cardStandard?.widthMm || 63.0;
+    const baseH = cardStandard?.heightMm || 88.0;
+    const effectiveBleedMm = bleedMm > 0 ? bleedMm : 3.0;
+    const padRatioX = effectiveBleedMm / (baseW + 2 * effectiveBleedMm);
+    const padRatioY = effectiveBleedMm / (baseH + 2 * effectiveBleedMm);
+    const bleedOffX = Math.round(fullPrintCanvas.width * padRatioX);
+    const bleedOffY = Math.round(fullPrintCanvas.height * padRatioY);
+    const trimW = fullPrintCanvas.width - bleedOffX * 2;
+    const trimH = fullPrintCanvas.height - bleedOffY * 2;
+
+    const trimCanvas = document.createElement('canvas');
+    trimCanvas.width = trimW;
+    trimCanvas.height = trimH;
+    const tCtx = trimCanvas.getContext('2d')!;
+    tCtx.drawImage(
+      fullPrintCanvas,
+      bleedOffX,
+      bleedOffY,
+      trimW,
+      trimH,
+      0,
+      0,
+      trimW,
+      trimH
+    );
+    return trimCanvas;
+  }
+
+  return fullPrintCanvas;
+}
+
 export function generateBatchThumbnails(
   sourceCanvas: HTMLCanvasElement,
   padMpcBleed: boolean,

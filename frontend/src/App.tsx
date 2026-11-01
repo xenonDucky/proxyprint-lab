@@ -10,9 +10,9 @@ import { CARD_STANDARDS, PRINTER_PROFILES, BUILTIN_PRESETS } from './constants';
 import { clampByte, applyUserAdjustments, simulatePrinterOutput } from './simulation';
 import { generatePresetCardCanvas } from './cardGenerator';
 import { runFullPrintPipeline } from './printPipeline';
-import { renderCardToPrintReadyCanvas, generateBatchThumbnails } from './renderExport';
+import { renderCardToPrintReadyCanvas, generateBatchThumbnails, renderCardForPdfSheet } from './renderExport';
 import { renderPreviewCanvases } from './canvasRenderer';
-import { StudioMode, ViewMode, BatchCardItem, InputMode } from './types';
+import { StudioMode, ViewMode, BatchCardItem, InputMode, PdfCardItem } from './types';
 
 // Component imports
 import { StudioHeader } from './components/StudioHeader';
@@ -22,6 +22,7 @@ import { SoftProofViewer } from './components/SoftProofViewer';
 import { LiveSimulator } from './components/LiveSimulator';
 import { DiagnosticScorecard } from './components/DiagnosticScorecard';
 import { BatchStudio } from './components/BatchStudio';
+import { PdfGenerator } from './components/PdfGenerator';
 
 // Re-export for backward compatibility with existing tests and modules
 export {
@@ -66,6 +67,7 @@ export default function App() {
     textTargetDpi: DPI_BENCHMARKS.min
   });
   const [bleedMm, setBleedMm] = useState<number>(3);
+  const [pdfCards, setPdfCards] = useState<PdfCardItem[]>([]);
 
   const [viewMode, setViewMode] = useState<ViewMode>('three_way');
   const [showGeometryGuides, setShowGeometryGuides] = useState(true);
@@ -424,6 +426,77 @@ export default function App() {
     setStudioMode('single');
   };
 
+  const handleAddBatchItemToPdf = useCallback(
+    (item: BatchCardItem) => {
+      setPdfCards((prev) => {
+        const existing = prev.find((c) => c.batchItemId === item.id);
+        if (existing) {
+          return prev.map((c) =>
+            c.batchItemId === item.id ? { ...c, quantity: (c.quantity || 1) + 1 } : c
+          );
+        }
+        const rendered = renderCardForPdfSheet(
+          item.sourceCanvas,
+          inputMode,
+          item.adjustments,
+          item.bleedMm ?? bleedMm,
+          cardStandard,
+          true
+        );
+        const newItem: PdfCardItem = {
+          id: `${Date.now()}_${item.id}`,
+          batchItemId: item.id,
+          fileName: item.fileName,
+          sourceCanvas: item.sourceCanvas,
+          renderedCanvas: rendered,
+          thumbUrl: item.origThumbUrl || item.simThumbUrl,
+          quantity: 1,
+          adjustments: item.adjustments,
+          cardStandard,
+          bleedMm: item.bleedMm ?? bleedMm
+        };
+        return [...prev, newItem];
+      });
+    },
+    [inputMode, bleedMm, cardStandard]
+  );
+
+  const handleAddAllBatchToPdf = useCallback(() => {
+    if (batchItems.length === 0) return;
+    setPdfCards((prev) => {
+      const copy = [...prev];
+      for (const item of batchItems) {
+        const existing = copy.find((c) => c.batchItemId === item.id);
+        if (existing) {
+          existing.quantity = (existing.quantity || 1) + 1;
+        } else {
+          const rendered = renderCardForPdfSheet(
+            item.sourceCanvas,
+            inputMode,
+            item.adjustments,
+            item.bleedMm ?? bleedMm,
+            cardStandard,
+            true
+          );
+          copy.push({
+            id: `${Date.now()}_${item.id}`,
+            batchItemId: item.id,
+            fileName: item.fileName,
+            sourceCanvas: item.sourceCanvas,
+            renderedCanvas: rendered,
+            thumbUrl: item.origThumbUrl || item.simThumbUrl,
+            quantity: 1,
+            adjustments: item.adjustments,
+            cardStandard,
+            bleedMm: item.bleedMm ?? bleedMm
+          });
+        }
+      }
+      return copy;
+    });
+    setStudioMode('pdf');
+  }, [batchItems, inputMode, bleedMm, cardStandard]);
+
   // Find if the currently loaded card already exists in the Batch Queue
   const existingBatchMatch = useMemo(() => {
     if (!sourceCanvas) return null;
@@ -530,6 +603,7 @@ export default function App() {
         setStudioMode={setStudioMode}
         backendStatus={backendStatus}
         batchItems={batchItems}
+        pdfCardCount={pdfCards.reduce((acc, c) => acc + (c.quantity || 1), 0)}
         overallScore={curScores.overall}
         baseOverallScore={baseScores.overall}
         hasAnyAdjustment={hasAnyAdjustment}
@@ -546,80 +620,98 @@ export default function App() {
 
       {/* Main Workspace */}
       <main className="flex-1 max-w-[1600px] w-full mx-auto px-4 sm:px-6 py-5 grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column (3 cols): Card Source & Print Target */}
-        <section className="lg:col-span-3 space-y-5">
-          <CardSourceSection
-            customFileName={customFileName}
-            activePresetId={activePresetId}
-            onSelectPreset={(presetId) => setActivePresetId(presetId)}
-            onImageUpload={handleImageUpload}
-            fileInputRef={fileInputRef}
-          />
-          <PrintTargetSection
-            inputMode={inputMode}
-            setInputMode={setInputMode}
-            cardStandardId={cardStandardId}
-            setCardStandardId={setCardStandardId}
-            bleedMm={bleedMm}
-            setBleedMm={setBleedMm}
-            printerProfileId={printerProfileId}
-            setPrinterProfileId={setPrinterProfileId}
-          />
-        </section>
-
-        {/* Center & Right Columns: Batch Studio vs Single Card Studio */}
-        {studioMode === 'batch' ? (
-          <BatchStudio
+        {studioMode === 'pdf' ? (
+          <PdfGenerator
+            pdfCards={pdfCards}
+            setPdfCards={setPdfCards}
             batchItems={batchItems}
-            setBatchItems={setBatchItems}
-            printerProfile={printerProfile}
+            cardStandard={cardStandard}
             inputMode={inputMode}
-            handleLoadDemoBatch={handleLoadDemoBatch}
-            handleExportBatchZip={handleExportBatchZip}
-            isExportingZip={isExportingZip}
-            isBatchProcessing={isBatchProcessing}
-            handleBatchFilesUpload={handleBatchFilesUpload}
-            batchFileInputRef={batchFileInputRef}
-            handleInspectBatchItem={handleInspectBatchItem}
+            bleedMm={bleedMm}
+            onSwitchToBatch={() => setStudioMode('batch')}
+            onAddBatchItemToPdf={handleAddBatchItemToPdf}
+            onAddAllBatchToPdf={handleAddAllBatchToPdf}
           />
         ) : (
           <>
-            {/* Center Column (5 cols): Visual Soft-Proof Viewer */}
-            <SoftProofViewer
-              viewMode={viewMode}
-              setViewMode={setViewMode}
-              showGeometryGuides={showGeometryGuides}
-              setShowGeometryGuides={setShowGeometryGuides}
-              inputMode={inputMode}
-              printerProfile={printerProfile}
-              analysis={analysis}
-              hasAnyAdjustment={hasAnyAdjustment}
-              mainPreviewCanvasRef={mainPreviewCanvasRef}
-              origCompareCanvasRef={origCompareCanvasRef}
-              simCompareCanvasRef={simCompareCanvasRef}
-              heatmapCompareCanvasRef={heatmapCompareCanvasRef}
-            />
-
-            {/* Right Column (4 cols): Live Simulator & Diagnostic Scorecard */}
-            <section className="lg:col-span-4 flex flex-col gap-5">
-              <LiveSimulator
-                adjustments={adjustments}
-                setAdjustments={setAdjustments}
-                hasAnyAdjustment={hasAnyAdjustment}
-                resetAdjustments={resetAdjustments}
-                analysis={analysis}
-                inputMode={inputMode}
-                handleSaveCurrentToBatch={handleSaveCurrentToBatch}
-                batchSaveFlash={batchSaveFlash}
-                existingBatchMatch={existingBatchMatch}
-                setStudioMode={setStudioMode}
+            {/* Left Column (3 cols): Card Source & Print Target */}
+            <section className="lg:col-span-3 space-y-5">
+              <CardSourceSection
+                customFileName={customFileName}
+                activePresetId={activePresetId}
+                onSelectPreset={(presetId) => setActivePresetId(presetId)}
+                onImageUpload={handleImageUpload}
+                fileInputRef={fileInputRef}
               />
-              <DiagnosticScorecard
-                cardStandard={cardStandard}
-                printerProfile={printerProfile}
-                analysis={analysis}
+              <PrintTargetSection
+                inputMode={inputMode}
+                setInputMode={setInputMode}
+                cardStandardId={cardStandardId}
+                setCardStandardId={setCardStandardId}
+                bleedMm={bleedMm}
+                setBleedMm={setBleedMm}
+                printerProfileId={printerProfileId}
+                setPrinterProfileId={setPrinterProfileId}
               />
             </section>
+
+            {/* Center & Right Columns: Batch Studio vs Single Card Studio */}
+            {studioMode === 'batch' ? (
+              <BatchStudio
+                batchItems={batchItems}
+                setBatchItems={setBatchItems}
+                printerProfile={printerProfile}
+                inputMode={inputMode}
+                handleLoadDemoBatch={handleLoadDemoBatch}
+                handleExportBatchZip={handleExportBatchZip}
+                isExportingZip={isExportingZip}
+                isBatchProcessing={isBatchProcessing}
+                handleBatchFilesUpload={handleBatchFilesUpload}
+                batchFileInputRef={batchFileInputRef}
+                handleInspectBatchItem={handleInspectBatchItem}
+                onAddBatchItemToPdf={handleAddBatchItemToPdf}
+                onAddAllBatchToPdf={handleAddAllBatchToPdf}
+              />
+            ) : (
+              <>
+                {/* Center Column (5 cols): Visual Soft-Proof Viewer */}
+                <SoftProofViewer
+                  viewMode={viewMode}
+                  setViewMode={setViewMode}
+                  showGeometryGuides={showGeometryGuides}
+                  setShowGeometryGuides={setShowGeometryGuides}
+                  inputMode={inputMode}
+                  printerProfile={printerProfile}
+                  analysis={analysis}
+                  hasAnyAdjustment={hasAnyAdjustment}
+                  mainPreviewCanvasRef={mainPreviewCanvasRef}
+                  origCompareCanvasRef={origCompareCanvasRef}
+                  simCompareCanvasRef={simCompareCanvasRef}
+                  heatmapCompareCanvasRef={heatmapCompareCanvasRef}
+                />
+
+                {/* Right Column (4 cols): Live Simulator & Diagnostic Scorecard */}
+                <section className="lg:col-span-4 flex flex-col gap-5">
+                  <LiveSimulator
+                    adjustments={adjustments}
+                    setAdjustments={setAdjustments}
+                    hasAnyAdjustment={hasAnyAdjustment}
+                    resetAdjustments={resetAdjustments}
+                    analysis={analysis}
+                    inputMode={inputMode}
+                    handleSaveCurrentToBatch={handleSaveCurrentToBatch}
+                    batchSaveFlash={batchSaveFlash}
+                    existingBatchMatch={existingBatchMatch}
+                    setStudioMode={setStudioMode}
+                  />
+                  <DiagnosticScorecard
+                    cardStandard={cardStandard}
+                    printerProfile={printerProfile}
+                    analysis={analysis}
+                  />
+                </section>
+              </>
+            )}
           </>
         )}
       </main>

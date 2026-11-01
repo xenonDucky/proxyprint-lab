@@ -194,3 +194,31 @@ def test_dynamic_bleed_mm_pipeline_and_export():
     assert res_batch.status_code == 200
     assert res_batch.headers["content-type"] == "application/zip"
 
+
+def test_generate_pdf_endpoint():
+    card_bytes = create_synthetic_test_card(744, 1039, dark_art=False)
+    # Test generating a 3x3 sheet with 9 cards on US Letter
+    files = [("files", (f"card_{i}.png", card_bytes, "image/png")) for i in range(9)]
+    res = client.post(
+        "/api/generate-pdf",
+        files=files,
+        data={
+            "input_mode": "full_card",
+            "card_standard_id": "tcg_trim",
+            "printer_profile_id": "mpc_commercial",
+            "paper_size": "letter",
+            "guide_width_mm": "0.265",
+            "show_guides": "true",
+            "extend_guides": "true",
+        },
+    )
+    assert res.status_code == 200
+    assert res.headers["content-type"] == "application/pdf"
+    pdf_bytes = res.content
+    assert pdf_bytes.startswith(b"%PDF-1.4")
+    assert b"%%EOF" in pdf_bytes
+    assert b"/MediaBox [0 0 612.00 792.00]" in pdf_bytes
+    # 0.265mm stroke width in points: 0.265 * 72 / 25.4 ≈ 0.7512 pt
+    assert b"0.7512 w" in pdf_bytes
+
+
