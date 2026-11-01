@@ -29,6 +29,8 @@ export interface StudioHeaderProps {
   existingBatchMatch: BatchCardItem | null;
   onExportPng: () => void;
   onExportBatchZip: () => void;
+  onOptimizeBatch?: () => void;
+  isBatchProcessing?: boolean;
   isExportingZip: boolean;
   batchFileInputRef: RefObject<HTMLInputElement | null>;
   onBatchFilesUpload: (files: FileList | null) => void;
@@ -49,6 +51,8 @@ export function StudioHeader({
   existingBatchMatch,
   onExportPng,
   onExportBatchZip,
+  onOptimizeBatch,
+  isBatchProcessing = false,
   isExportingZip,
   batchFileInputRef,
   onBatchFilesUpload
@@ -237,6 +241,20 @@ export function StudioHeader({
                   e.target.value = '';
                 }}
               />
+              {onOptimizeBatch && (
+                <button
+                  onClick={onOptimizeBatch}
+                  disabled={batchItems.length === 0 || isBatchProcessing}
+                  className={`flex items-center gap-2 px-3.5 py-2.5 rounded-xl text-xs font-semibold shadow-lg transition cursor-pointer ${
+                    batchItems.length === 0 || isBatchProcessing
+                      ? 'bg-slate-800 text-slate-500 border border-slate-800 cursor-not-allowed'
+                      : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-600/25'
+                  }`}
+                >
+                  <Sparkles className="w-4 h-4" />
+                  {isBatchProcessing ? 'Optimizing...' : 'Optimize'}
+                </button>
+              )}
               <button
                 onClick={onExportBatchZip}
                 disabled={batchItems.length === 0 || isExportingZip}

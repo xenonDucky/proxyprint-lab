@@ -150,6 +150,10 @@ export interface BatchCardItem {
   sourceCanvas: HTMLCanvasElement;
   padBleed: boolean;
   bleedMm?: number;
+  inputMode?: InputMode | string;
+  cardStandardId?: string;
+  printerProfileId?: string;
+  isOptimized?: boolean;
   adjustments: AdjustmentParams;
   baselineScores: StageScores;
   optimizedScores: StageScores;

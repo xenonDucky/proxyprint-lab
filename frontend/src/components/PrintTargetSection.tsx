@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Printer } from 'lucide-react';
+import { Printer, Sparkles } from 'lucide-react';
 import { CARD_STANDARDS, PRINTER_PROFILES } from '../constants';
 import { InputMode } from '../types';
 
@@ -12,6 +12,10 @@ export interface PrintTargetSectionProps {
   setBleedMm: (val: number) => void;
   printerProfileId: string;
   setPrinterProfileId: (id: string) => void;
+  isBatchMode?: boolean;
+  onOptimizeBatch?: () => void;
+  batchCount?: number;
+  isBatchProcessing?: boolean;
 }
 
 export function PrintTargetSection({
@@ -22,7 +26,11 @@ export function PrintTargetSection({
   bleedMm,
   setBleedMm,
   printerProfileId,
-  setPrinterProfileId
+  setPrinterProfileId,
+  isBatchMode = false,
+  onOptimizeBatch,
+  batchCount = 0,
+  isBatchProcessing = false
 }: PrintTargetSectionProps) {
   const [bleedUnit, setBleedUnit] = useState<'mm' | 'mil'>('mm');
 
@@ -240,6 +248,31 @@ export function PrintTargetSection({
           ))}
         </div>
       </div>
+
+      {isBatchMode && (
+        <div className="pt-3 border-t border-slate-800 space-y-2.5">
+          <p className="text-[11px] text-slate-400 leading-relaxed">
+            Batch target settings are independent from Single Card Studio and are applied to all cards in the batch queue only when you click <span className="text-indigo-300 font-semibold">Optimize</span>.
+          </p>
+          {onOptimizeBatch && (
+            <button
+              type="button"
+              onClick={onOptimizeBatch}
+              disabled={batchCount === 0 || isBatchProcessing}
+              className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-lg transition cursor-pointer ${
+                batchCount === 0 || isBatchProcessing
+                  ? 'bg-slate-800 text-slate-500 border border-slate-800 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-600/25'
+              }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              {isBatchProcessing
+                ? 'Optimizing Batch...'
+                : `Optimize Batch (${batchCount} ${batchCount === 1 ? 'Card' : 'Cards'})`}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

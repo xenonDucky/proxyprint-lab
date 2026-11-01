@@ -19,6 +19,7 @@ export interface BatchStudioProps {
   printerProfile: PrinterProfile;
   inputMode: InputMode | string;
   handleLoadDemoBatch: () => void;
+  handleOptimizeBatch: () => void;
   handleExportBatchZip: () => void;
   isExportingZip: boolean;
   isBatchProcessing: boolean;
@@ -35,6 +36,7 @@ export function BatchStudio({
   printerProfile,
   inputMode,
   handleLoadDemoBatch,
+  handleOptimizeBatch,
   handleExportBatchZip,
   isExportingZip,
   isBatchProcessing,
@@ -55,7 +57,8 @@ export function BatchStudio({
               Batch Auto-Adjust &amp; Print-Ready ZIP Exporter
             </h2>
             <p className="text-xs text-slate-400 mt-0.5">
-              Upload multiple cards at once — each card is individually analyzed and auto-optimized for{' '}
+              Upload multiple cards, configure your target on the left, and click{' '}
+              <span className="text-indigo-300 font-semibold">Optimize</span> to tune all cards for{' '}
               <span className="text-indigo-300 font-semibold">{printerProfile.name}</span>{' '}
               ({inputMode === 'full_card' ? 'Art Box Only' : 'Entire Card'}).
             </p>
@@ -66,8 +69,21 @@ export function BatchStudio({
               onClick={handleLoadDemoBatch}
               className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-semibold flex items-center gap-1.5 transition cursor-pointer"
             >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+              <Plus className="w-3.5 h-3.5 text-amber-400" />
               Load 4 Sample Cards
+            </button>
+            <button
+              type="button"
+              onClick={handleOptimizeBatch}
+              disabled={batchItems.length === 0 || isBatchProcessing}
+              className={`px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-lg transition cursor-pointer ${
+                batchItems.length === 0 || isBatchProcessing
+                  ? 'bg-slate-800 text-slate-500 border border-slate-800 cursor-not-allowed'
+                  : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white shadow-indigo-600/25'
+              }`}
+            >
+              <Sparkles className="w-4 h-4" />
+              {isBatchProcessing ? 'Optimizing...' : 'Optimize'}
             </button>
             {batchItems.length > 0 && (
               <button
@@ -120,11 +136,11 @@ export function BatchStudio({
           </div>
           <div className="text-sm font-bold text-slate-200">
             {isBatchProcessing
-              ? 'Analyzing & Auto-Optimizing Cards...'
+              ? 'Processing Batch Cards...'
               : 'Drop multiple MTG proxy images here or click to select files'}
           </div>
           <p className="text-xs text-slate-400 max-w-xl">
-            Automatically runs the 6-Stage Pipeline + Coarse-to-Fine Pattern Search on every card, pads missing 3mm MPC bleed if required, and packages all compensated PNGs into a single `.zip`.
+            Cards are added to the batch queue without automatic modification. Click <span className="text-indigo-300 font-semibold">Optimize</span> when ready to run the 6-Stage Pipeline + Coarse-to-Fine Pattern Search using the Print Target settings on the left.
           </p>
         </div>
       </div>
@@ -193,45 +209,63 @@ export function BatchStudio({
                       />
                     </div>
                     <div className="flex flex-col items-center">
-                      <span className="text-[10px] font-bold text-emerald-400 mb-1 flex items-center gap-1">
-                        <CheckCircle2 className="w-3 h-3" />
-                        Auto-Adjusted ({optScore}/100)
-                      </span>
+                      {item.isOptimized !== false ? (
+                        <span className="text-[10px] font-bold text-emerald-400 mb-1 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3" />
+                          Adjusted ({optScore}/100)
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-semibold text-amber-400 mb-1 flex items-center gap-1">
+                          Unoptimized ({optScore}/100)
+                        </span>
+                      )}
                       <img
                         src={item.simThumbUrl}
                         alt="Simulated Print"
-                        className="w-full max-w-[125px] h-auto rounded-lg border border-indigo-500/50 shadow-md"
+                        className={`w-full max-w-[125px] h-auto rounded-lg border shadow-md ${
+                          item.isOptimized !== false
+                            ? 'border-indigo-500/50'
+                            : 'border-slate-800'
+                        }`}
                       />
                     </div>
                   </div>
 
                   {/* Applied Optimal Parameters Pills */}
                   <div className="mt-3 flex flex-wrap gap-1.5">
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">
-                      Toe Lift: +{item.adjustments.shadowLift}%
-                    </span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                      γ: {item.adjustments.gamma.toFixed(2)}
-                    </span>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                      Contrast: {item.adjustments.contrast >= 0 ? `+${item.adjustments.contrast}` : item.adjustments.contrast}%
-                    </span>
-                    {item.adjustments.saturation !== 0 && (
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
-                        Sat: {item.adjustments.saturation >= 0 ? `+${item.adjustments.saturation}` : item.adjustments.saturation}%
-                      </span>
-                    )}
-                    {((item.adjustments.sharpen || 0) > 0 ||
-                      (item.adjustments.artTargetDpi ?? 300) > 300) && (
+                    {item.isOptimized === false ? (
                       <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
-                        Art: {item.adjustments.artTargetDpi ?? DPI_BENCHMARKS.ideal} DPI (+{item.adjustments.sharpen}%)
+                        Not Optimized — Click Optimize to auto-adjust
                       </span>
-                    )}
-                    {((item.adjustments.textBoxSharpen || 0) > 0 ||
-                      (item.adjustments.textTargetDpi ?? 300) > 300) && (
-                      <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-violet-300">
-                        Text: {item.adjustments.textTargetDpi ?? DPI_BENCHMARKS.ideal} DPI (+{item.adjustments.textBoxSharpen}%)
-                      </span>
+                    ) : (
+                      <>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-indigo-500/15 border border-indigo-500/30 text-indigo-300">
+                          Toe Lift: +{item.adjustments.shadowLift}%
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                          γ: {item.adjustments.gamma.toFixed(2)}
+                        </span>
+                        <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                          Contrast: {item.adjustments.contrast >= 0 ? `+${item.adjustments.contrast}` : item.adjustments.contrast}%
+                        </span>
+                        {item.adjustments.saturation !== 0 && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 text-slate-300">
+                            Sat: {item.adjustments.saturation >= 0 ? `+${item.adjustments.saturation}` : item.adjustments.saturation}%
+                          </span>
+                        )}
+                        {((item.adjustments.sharpen || 0) > 0 ||
+                          (item.adjustments.artTargetDpi ?? 300) > 300) && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
+                            Art: {item.adjustments.artTargetDpi ?? DPI_BENCHMARKS.ideal} DPI (+{item.adjustments.sharpen}%)
+                          </span>
+                        )}
+                        {((item.adjustments.textBoxSharpen || 0) > 0 ||
+                          (item.adjustments.textTargetDpi ?? 300) > 300) && (
+                          <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-violet-300">
+                            Text: {item.adjustments.textTargetDpi ?? DPI_BENCHMARKS.ideal} DPI (+{item.adjustments.textBoxSharpen}%)
+                          </span>
+                        )}
+                      </>
                     )}
                   </div>
                 </div>

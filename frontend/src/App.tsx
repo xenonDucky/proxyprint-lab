@@ -51,9 +51,17 @@ export default function App() {
   const [isExportingZip, setIsExportingZip] = useState(false);
   const batchFileInputRef = useRef<HTMLInputElement | null>(null);
 
+  // Single Card Studio Print Target State
   const [inputMode, setInputMode] = useState<InputMode | string>('full_card');
   const [cardStandardId, setCardStandardId] = useState('tcg_trim');
   const [printerProfileId, setPrinterProfileId] = useState('mpc_commercial');
+  const [bleedMm, setBleedMm] = useState<number>(3);
+
+  // Batch Mode Independent Print Target State (only applied when Optimize is clicked in Batch)
+  const [batchInputMode, setBatchInputMode] = useState<InputMode | string>('full_card');
+  const [batchCardStandardId, setBatchCardStandardId] = useState('tcg_trim');
+  const [batchPrinterProfileId, setBatchPrinterProfileId] = useState('mpc_commercial');
+  const [batchBleedMm, setBatchBleedMm] = useState<number>(3);
 
   const [adjustments, setAdjustments] = useState<AdjustmentParams>({
     shadowLift: 0,
@@ -66,7 +74,6 @@ export default function App() {
     artTargetDpi: DPI_BENCHMARKS.min,
     textTargetDpi: DPI_BENCHMARKS.min
   });
-  const [bleedMm, setBleedMm] = useState<number>(3);
   const [pdfCards, setPdfCards] = useState<PdfCardItem[]>([]);
 
   const [viewMode, setViewMode] = useState<ViewMode>('three_way');
@@ -81,6 +88,9 @@ export default function App() {
 
   const cardStandard = CARD_STANDARDS[cardStandardId] || CARD_STANDARDS.mpc_bleed;
   const printerProfile = PRINTER_PROFILES[printerProfileId] || PRINTER_PROFILES.mpc_commercial;
+
+  const batchCardStandard = CARD_STANDARDS[batchCardStandardId] || CARD_STANDARDS.mpc_bleed;
+  const batchPrinterProfile = PRINTER_PROFILES[batchPrinterProfileId] || PRINTER_PROFILES.mpc_commercial;
 
   // Probe FastAPI Backend availability on mount
   useEffect(() => {
@@ -228,14 +238,70 @@ export default function App() {
     link.click();
   };
 
-  // Process a single canvas into an auto-optimized BatchCardItem
+  // Build an unadjusted BatchCardItem on upload (does NOT auto-optimize until user clicks Optimize)
+  const buildUnoptimizedBatchItem = useCallback(
+    (c: HTMLCanvasElement, fileName: string, id: string): BatchCardItem => {
+      const zeroParams: AdjustmentParams = {
+        shadowLift: 0,
+        gamma: 1.0,
+        brightness: 0,
+        contrast: 0,
+        saturation: 0,
+        sharpen: 0,
+        textBoxSharpen: 0,
+        artTargetDpi: DPI_BENCHMARKS.min,
+        textTargetDpi: DPI_BENCHMARKS.min
+      };
+
+      const initialAnalysis = runFullPrintPipeline({
+        sourceCanvas: c,
+        inputMode: batchInputMode,
+        cardStandard: batchCardStandard,
+        printerProfile: batchPrinterProfile,
+        adjustments: zeroParams,
+        bleedMm: batchBleedMm
+      })!;
+
+      const thumbs = generateBatchThumbnails(
+        c,
+        batchBleedMm > 0,
+        initialAnalysis.geometry.has3mmBleed,
+        batchInputMode,
+        zeroParams,
+        initialAnalysis.printer3DLut,
+        batchBleedMm,
+        batchCardStandard
+      );
+
+      return {
+        id,
+        fileName,
+        sourceCanvas: c,
+        padBleed: batchBleedMm > 0,
+        bleedMm: batchBleedMm,
+        inputMode: batchInputMode,
+        cardStandardId: batchCardStandardId,
+        printerProfileId: batchPrinterProfileId,
+        isOptimized: false,
+        adjustments: zeroParams,
+        baselineScores: initialAnalysis.baseline.scores,
+        optimizedScores: initialAnalysis.current.scores,
+        geometry: initialAnalysis.geometry,
+        origThumbUrl: thumbs.origThumbUrl,
+        simThumbUrl: thumbs.simThumbUrl
+      };
+    },
+    [batchInputMode, batchCardStandard, batchPrinterProfile, batchBleedMm, batchCardStandardId, batchPrinterProfileId]
+  );
+
+  // Process a single canvas into an auto-optimized BatchCardItem using Batch settings
   const buildOptimizedBatchItem = useCallback(
     (c: HTMLCanvasElement, fileName: string, id: string): BatchCardItem => {
       const initialAnalysis = runFullPrintPipeline({
         sourceCanvas: c,
-        inputMode,
-        cardStandard,
-        printerProfile,
+        inputMode: batchInputMode,
+        cardStandard: batchCardStandard,
+        printerProfile: batchPrinterProfile,
         adjustments: {
           shadowLift: 0,
           gamma: 1.0,
@@ -245,16 +311,16 @@ export default function App() {
           sharpen: 0,
           textBoxSharpen: 0
         },
-        bleedMm
+        bleedMm: batchBleedMm
       })!;
 
       const optParams = optimizePrintAdjustments({
         rawPixels: initialAnalysis.rawAnalysisPixels,
         anW: initialAnalysis.anW,
         anH: initialAnalysis.anH,
-        has3mmBleed: initialAnalysis.geometry.has3mmBleed || bleedMm > 0,
-        inputMode,
-        printerProfile,
+        has3mmBleed: initialAnalysis.geometry.has3mmBleed || batchBleedMm > 0,
+        inputMode: batchInputMode,
+        printerProfile: batchPrinterProfile,
         printer3DLut: initialAnalysis.printer3DLut,
         resolutionScore: initialAnalysis.resolutionScore,
         artOpticalPpi: initialAnalysis.geometry.effectiveOpticalPpi,
@@ -264,30 +330,34 @@ export default function App() {
 
       const finalAnalysis = runFullPrintPipeline({
         sourceCanvas: c,
-        inputMode,
-        cardStandard,
-        printerProfile,
+        inputMode: batchInputMode,
+        cardStandard: batchCardStandard,
+        printerProfile: batchPrinterProfile,
         adjustments: optParams,
-        bleedMm
+        bleedMm: batchBleedMm
       })!;
 
       const thumbs = generateBatchThumbnails(
         c,
-        bleedMm > 0,
+        batchBleedMm > 0,
         finalAnalysis.geometry.has3mmBleed,
-        inputMode,
+        batchInputMode,
         optParams,
         finalAnalysis.printer3DLut,
-        bleedMm,
-        cardStandard
+        batchBleedMm,
+        batchCardStandard
       );
 
       return {
         id,
         fileName,
         sourceCanvas: c,
-        padBleed: bleedMm > 0,
-        bleedMm,
+        padBleed: batchBleedMm > 0,
+        bleedMm: batchBleedMm,
+        inputMode: batchInputMode,
+        cardStandardId: batchCardStandardId,
+        printerProfileId: batchPrinterProfileId,
+        isOptimized: true,
         adjustments: optParams,
         baselineScores: initialAnalysis.baseline.scores,
         optimizedScores: finalAnalysis.current.scores,
@@ -296,18 +366,25 @@ export default function App() {
         simThumbUrl: thumbs.simThumbUrl
       };
     },
-    [inputMode, cardStandard, printerProfile, bleedMm]
+    [batchInputMode, batchCardStandard, batchPrinterProfile, batchBleedMm, batchCardStandardId, batchPrinterProfileId]
   );
 
-  // Re-optimize existing batch items whenever inputMode, cardStandard, printerProfile, or bleedMm changes
-  useEffect(() => {
+  // Explicitly optimize all cards in Batch Queue when the Batch Optimize button is clicked
+  const handleOptimizeBatch = useCallback(() => {
     if (batchItems.length === 0) return;
-    setBatchItems((prev) =>
-      prev.map((item) => buildOptimizedBatchItem(item.sourceCanvas, item.fileName, item.id))
-    );
-  }, [inputMode, cardStandardId, printerProfileId, bleedMm]);
+    setIsBatchProcessing(true);
+    setTimeout(() => {
+      try {
+        setBatchItems((prev) =>
+          prev.map((item) => buildOptimizedBatchItem(item.sourceCanvas, item.fileName, item.id))
+        );
+      } finally {
+        setIsBatchProcessing(false);
+      }
+    }, 20);
+  }, [batchItems.length, buildOptimizedBatchItem]);
 
-  // Handle multi-file upload in Batch Auto-Adjust mode
+  // Handle multi-file upload in Batch mode (adds cards unoptimized; user clicks Optimize when ready)
   const handleBatchFilesUpload = useCallback(
     async (fileList: FileList | File[] | null) => {
       if (!fileList || fileList.length === 0) return;
@@ -340,24 +417,24 @@ export default function App() {
         for (let i = 0; i < files.length; i++) {
           const { canvas, name } = await loadFileAsCanvas(files[i]);
           const id = `${Date.now()}_${i}_${name}`;
-          newItems.push(buildOptimizedBatchItem(canvas, name, id));
+          newItems.push(buildUnoptimizedBatchItem(canvas, name, id));
         }
         setBatchItems((prev) => [...prev, ...newItems]);
       } finally {
         setIsBatchProcessing(false);
       }
     },
-    [buildOptimizedBatchItem]
+    [buildUnoptimizedBatchItem]
   );
 
-  // Load the 4 built-in calibration cards into Batch mode for instant demo/testing
+  // Load the 4 built-in calibration cards into Batch mode (unoptimized until Optimize is clicked)
   const handleLoadDemoBatch = () => {
     setIsBatchProcessing(true);
     setStudioMode('batch');
     setTimeout(() => {
       const demoItems = BUILTIN_PRESETS.map((preset, idx) => {
         const c = generatePresetCardCanvas(preset.id);
-        return buildOptimizedBatchItem(c, `${preset.id}.png`, `demo_${Date.now()}_${idx}`);
+        return buildUnoptimizedBatchItem(c, `${preset.id}.png`, `demo_${Date.now()}_${idx}`);
       });
       setBatchItems(demoItems);
       setIsBatchProcessing(false);
@@ -372,14 +449,17 @@ export default function App() {
     setTimeout(() => {
       try {
         const entries: ZipEntryInput[] = batchItems.map((item, idx) => {
+          const itemInputMode = item.inputMode ?? batchInputMode;
+          const itemCardStd = CARD_STANDARDS[item.cardStandardId ?? batchCardStandardId] || batchCardStandard;
+          const itemBleed = item.bleedMm ?? batchBleedMm;
           const outCanvas = renderCardToPrintReadyCanvas(
             item.sourceCanvas,
             item.padBleed,
             item.geometry.has3mmBleed,
-            inputMode,
+            itemInputMode,
             item.adjustments,
-            item.bleedMm ?? bleedMm,
-            cardStandard
+            itemBleed,
+            itemCardStd
           );
           const dataUrl = outCanvas.toDataURL('image/png');
           const bytes = dataUrlToUint8Array(dataUrl);
@@ -394,7 +474,7 @@ export default function App() {
         const url = URL.createObjectURL(zipBlob);
         const link = document.createElement('a');
         link.href = url;
-        link.download = `proxyprint_batch_${printerProfileId}_${batchItems.length}cards.zip`;
+        link.download = `proxyprint_batch_${batchPrinterProfileId}_${batchItems.length}cards.zip`;
         link.click();
         setTimeout(() => URL.revokeObjectURL(url), 5000);
       } finally {
@@ -412,6 +492,15 @@ export default function App() {
     if (item.bleedMm !== undefined) {
       setBleedMm(item.bleedMm);
     }
+    if (item.inputMode !== undefined) {
+      setInputMode(item.inputMode);
+    }
+    if (item.cardStandardId !== undefined) {
+      setCardStandardId(item.cardStandardId);
+    }
+    if (item.printerProfileId !== undefined) {
+      setPrinterProfileId(item.printerProfileId);
+    }
     setAdjustments({
       shadowLift: item.adjustments.shadowLift,
       gamma: item.adjustments.gamma,
@@ -420,8 +509,8 @@ export default function App() {
       saturation: item.adjustments.saturation,
       sharpen: item.adjustments.sharpen || 0,
       textBoxSharpen: item.adjustments.textBoxSharpen || 0,
-      artTargetDpi: item.adjustments.artTargetDpi ?? DPI_BENCHMARKS.ideal,
-      textTargetDpi: item.adjustments.textTargetDpi ?? DPI_BENCHMARKS.ideal
+      artTargetDpi: item.adjustments.artTargetDpi ?? DPI_BENCHMARKS.min,
+      textTargetDpi: item.adjustments.textTargetDpi ?? DPI_BENCHMARKS.min
     });
     setStudioMode('single');
   };
@@ -435,12 +524,15 @@ export default function App() {
             c.batchItemId === item.id ? { ...c, quantity: (c.quantity || 1) + 1 } : c
           );
         }
+        const itemInputMode = item.inputMode ?? batchInputMode;
+        const itemCardStd = CARD_STANDARDS[item.cardStandardId ?? batchCardStandardId] || batchCardStandard;
+        const itemBleed = item.bleedMm ?? batchBleedMm;
         const rendered = renderCardForPdfSheet(
           item.sourceCanvas,
-          inputMode,
+          itemInputMode,
           item.adjustments,
-          item.bleedMm ?? bleedMm,
-          cardStandard,
+          itemBleed,
+          itemCardStd,
           true
         );
         const newItem: PdfCardItem = {
@@ -452,13 +544,13 @@ export default function App() {
           thumbUrl: item.origThumbUrl || item.simThumbUrl,
           quantity: 1,
           adjustments: item.adjustments,
-          cardStandard,
-          bleedMm: item.bleedMm ?? bleedMm
+          cardStandard: itemCardStd,
+          bleedMm: itemBleed
         };
         return [...prev, newItem];
       });
     },
-    [inputMode, bleedMm, cardStandard]
+    [batchInputMode, batchBleedMm, batchCardStandard, batchCardStandardId]
   );
 
   const handleAddAllBatchToPdf = useCallback(() => {
@@ -470,12 +562,15 @@ export default function App() {
         if (existing) {
           existing.quantity = (existing.quantity || 1) + 1;
         } else {
+          const itemInputMode = item.inputMode ?? batchInputMode;
+          const itemCardStd = CARD_STANDARDS[item.cardStandardId ?? batchCardStandardId] || batchCardStandard;
+          const itemBleed = item.bleedMm ?? batchBleedMm;
           const rendered = renderCardForPdfSheet(
             item.sourceCanvas,
-            inputMode,
+            itemInputMode,
             item.adjustments,
-            item.bleedMm ?? bleedMm,
-            cardStandard,
+            itemBleed,
+            itemCardStd,
             true
           );
           copy.push({
@@ -487,15 +582,15 @@ export default function App() {
             thumbUrl: item.origThumbUrl || item.simThumbUrl,
             quantity: 1,
             adjustments: item.adjustments,
-            cardStandard,
-            bleedMm: item.bleedMm ?? bleedMm
+            cardStandard: itemCardStd,
+            bleedMm: itemBleed
           });
         }
       }
       return copy;
     });
     setStudioMode('pdf');
-  }, [batchItems, inputMode, bleedMm, cardStandard]);
+  }, [batchItems, batchInputMode, batchBleedMm, batchCardStandard, batchCardStandardId]);
 
   // Find if the currently loaded card already exists in the Batch Queue
   const existingBatchMatch = useMemo(() => {
@@ -511,7 +606,7 @@ export default function App() {
     );
   }, [batchItems, editingBatchItemId, sourceCanvas, customFileName, activePresetId]);
 
-  // Save current card & parameters to Batch Queue (overwriting if it already exists, or appending if new)
+  // Save current card & parameters to Batch Queue (only updates this single card in Batch)
   const handleSaveCurrentToBatch = () => {
     if (!sourceCanvas || !analysis) return;
     const currentName = customFileName || (activePresetId ? `${activePresetId}.png` : 'mtg_proxy.png');
@@ -533,6 +628,10 @@ export default function App() {
       sourceCanvas,
       padBleed: bleedMm > 0,
       bleedMm,
+      inputMode,
+      cardStandardId,
+      printerProfileId,
+      isOptimized: true,
       adjustments: { ...adjustments },
       baselineScores: analysis.baseline.scores,
       optimizedScores: analysis.current.scores,
@@ -613,6 +712,8 @@ export default function App() {
         existingBatchMatch={existingBatchMatch}
         onExportPng={handleExportPng}
         onExportBatchZip={handleExportBatchZip}
+        onOptimizeBatch={handleOptimizeBatch}
+        isBatchProcessing={isBatchProcessing}
         isExportingZip={isExportingZip}
         batchFileInputRef={batchFileInputRef}
         onBatchFilesUpload={handleBatchFilesUpload}
@@ -625,16 +726,54 @@ export default function App() {
             pdfCards={pdfCards}
             setPdfCards={setPdfCards}
             batchItems={batchItems}
-            cardStandard={cardStandard}
-            inputMode={inputMode}
-            bleedMm={bleedMm}
+            cardStandard={batchCardStandard}
+            inputMode={batchInputMode}
+            bleedMm={batchBleedMm}
             onSwitchToBatch={() => setStudioMode('batch')}
             onAddBatchItemToPdf={handleAddBatchItemToPdf}
             onAddAllBatchToPdf={handleAddAllBatchToPdf}
           />
+        ) : studioMode === 'batch' ? (
+          <>
+            {/* Left Column in Batch Mode (3 cols): Only 2. Print Target & Geometry (independent Batch state) */}
+            <section className="lg:col-span-3 space-y-5">
+              <PrintTargetSection
+                inputMode={batchInputMode}
+                setInputMode={setBatchInputMode}
+                cardStandardId={batchCardStandardId}
+                setCardStandardId={setBatchCardStandardId}
+                bleedMm={batchBleedMm}
+                setBleedMm={setBatchBleedMm}
+                printerProfileId={batchPrinterProfileId}
+                setPrinterProfileId={setBatchPrinterProfileId}
+                isBatchMode={true}
+                onOptimizeBatch={handleOptimizeBatch}
+                batchCount={batchItems.length}
+                isBatchProcessing={isBatchProcessing}
+              />
+            </section>
+
+            {/* Right Column in Batch Mode (9 cols): Batch Studio */}
+            <BatchStudio
+              batchItems={batchItems}
+              setBatchItems={setBatchItems}
+              printerProfile={batchPrinterProfile}
+              inputMode={batchInputMode}
+              handleLoadDemoBatch={handleLoadDemoBatch}
+              handleOptimizeBatch={handleOptimizeBatch}
+              handleExportBatchZip={handleExportBatchZip}
+              isExportingZip={isExportingZip}
+              isBatchProcessing={isBatchProcessing}
+              handleBatchFilesUpload={handleBatchFilesUpload}
+              batchFileInputRef={batchFileInputRef}
+              handleInspectBatchItem={handleInspectBatchItem}
+              onAddBatchItemToPdf={handleAddBatchItemToPdf}
+              onAddAllBatchToPdf={handleAddAllBatchToPdf}
+            />
+          </>
         ) : (
           <>
-            {/* Left Column (3 cols): Card Source & Print Target */}
+            {/* Left Column in Single Card Studio (3 cols): 1. Card Source & 2. Print Target (independent Single Card state) */}
             <section className="lg:col-span-3 space-y-5">
               <CardSourceSection
                 customFileName={customFileName}
@@ -655,63 +794,42 @@ export default function App() {
               />
             </section>
 
-            {/* Center & Right Columns: Batch Studio vs Single Card Studio */}
-            {studioMode === 'batch' ? (
-              <BatchStudio
-                batchItems={batchItems}
-                setBatchItems={setBatchItems}
-                printerProfile={printerProfile}
-                inputMode={inputMode}
-                handleLoadDemoBatch={handleLoadDemoBatch}
-                handleExportBatchZip={handleExportBatchZip}
-                isExportingZip={isExportingZip}
-                isBatchProcessing={isBatchProcessing}
-                handleBatchFilesUpload={handleBatchFilesUpload}
-                batchFileInputRef={batchFileInputRef}
-                handleInspectBatchItem={handleInspectBatchItem}
-                onAddBatchItemToPdf={handleAddBatchItemToPdf}
-                onAddAllBatchToPdf={handleAddAllBatchToPdf}
-              />
-            ) : (
-              <>
-                {/* Center Column (5 cols): Visual Soft-Proof Viewer */}
-                <SoftProofViewer
-                  viewMode={viewMode}
-                  setViewMode={setViewMode}
-                  showGeometryGuides={showGeometryGuides}
-                  setShowGeometryGuides={setShowGeometryGuides}
-                  inputMode={inputMode}
-                  printerProfile={printerProfile}
-                  analysis={analysis}
-                  hasAnyAdjustment={hasAnyAdjustment}
-                  mainPreviewCanvasRef={mainPreviewCanvasRef}
-                  origCompareCanvasRef={origCompareCanvasRef}
-                  simCompareCanvasRef={simCompareCanvasRef}
-                  heatmapCompareCanvasRef={heatmapCompareCanvasRef}
-                />
+            {/* Center Column (5 cols): Visual Soft-Proof Viewer */}
+            <SoftProofViewer
+              viewMode={viewMode}
+              setViewMode={setViewMode}
+              showGeometryGuides={showGeometryGuides}
+              setShowGeometryGuides={setShowGeometryGuides}
+              inputMode={inputMode}
+              printerProfile={printerProfile}
+              analysis={analysis}
+              hasAnyAdjustment={hasAnyAdjustment}
+              mainPreviewCanvasRef={mainPreviewCanvasRef}
+              origCompareCanvasRef={origCompareCanvasRef}
+              simCompareCanvasRef={simCompareCanvasRef}
+              heatmapCompareCanvasRef={heatmapCompareCanvasRef}
+            />
 
-                {/* Right Column (4 cols): Live Simulator & Diagnostic Scorecard */}
-                <section className="lg:col-span-4 flex flex-col gap-5">
-                  <LiveSimulator
-                    adjustments={adjustments}
-                    setAdjustments={setAdjustments}
-                    hasAnyAdjustment={hasAnyAdjustment}
-                    resetAdjustments={resetAdjustments}
-                    analysis={analysis}
-                    inputMode={inputMode}
-                    handleSaveCurrentToBatch={handleSaveCurrentToBatch}
-                    batchSaveFlash={batchSaveFlash}
-                    existingBatchMatch={existingBatchMatch}
-                    setStudioMode={setStudioMode}
-                  />
-                  <DiagnosticScorecard
-                    cardStandard={cardStandard}
-                    printerProfile={printerProfile}
-                    analysis={analysis}
-                  />
-                </section>
-              </>
-            )}
+            {/* Right Column (4 cols): Live Simulator & Diagnostic Scorecard */}
+            <section className="lg:col-span-4 flex flex-col gap-5">
+              <LiveSimulator
+                adjustments={adjustments}
+                setAdjustments={setAdjustments}
+                hasAnyAdjustment={hasAnyAdjustment}
+                resetAdjustments={resetAdjustments}
+                analysis={analysis}
+                inputMode={inputMode}
+                handleSaveCurrentToBatch={handleSaveCurrentToBatch}
+                batchSaveFlash={batchSaveFlash}
+                existingBatchMatch={existingBatchMatch}
+                setStudioMode={setStudioMode}
+              />
+              <DiagnosticScorecard
+                cardStandard={cardStandard}
+                printerProfile={printerProfile}
+                analysis={analysis}
+              />
+            </section>
           </>
         )}
       </main>
