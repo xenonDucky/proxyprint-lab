@@ -631,10 +631,10 @@ export function optimizePrintAdjustments({
   const trimSpanW = anW - bleedOffsetX * 2;
   const trimSpanH = anH - bleedOffsetY * 2;
 
-  const maskX0 = Math.floor(bleedOffsetX + trimSpanW * 0.078);
-  const maskX1 = Math.ceil(bleedOffsetX + trimSpanW * 0.922);
-  const maskY0 = Math.floor(bleedOffsetY + trimSpanH * 0.112);
-  const maskY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.547);
+  const maskX0 = Math.floor(bleedOffsetX + trimSpanW * 0.074);
+  const maskX1 = Math.ceil(bleedOffsetX + trimSpanW * 0.926);
+  const maskY0 = Math.floor(bleedOffsetY + trimSpanH * 0.111);
+  const maskY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.556);
 
   let maskCount = 0;
   const baseLValues: number[] = [];

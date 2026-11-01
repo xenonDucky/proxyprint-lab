@@ -368,14 +368,14 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
 
       expect(unpaddedResult.geometry.has3mmBleed).toBe(false);
       const unpaddedVm = unpaddedResult.current.visualMaps!;
-      expect(unpaddedVm.artBoxNorm.x).toBeCloseTo(0.078, 2);
-      expect(unpaddedVm.artBoxNorm.y).toBeCloseTo(0.112, 2);
-      // Rules text box must be aligned at y: 0.614 (not overlapping type banner at 0.556)
-      expect(unpaddedVm.textBoxNorm!.y).toBeCloseTo(0.614, 2);
-      expect(unpaddedVm.textBoxNorm!.h).toBeCloseTo(0.275, 2);
-      // Type banner guide must be at y: 0.556
-      expect(unpaddedVm.typeBannerNorm!.y).toBeCloseTo(0.556, 2);
-      expect(unpaddedVm.typeBannerNorm!.h).toBeCloseTo(0.048, 2);
+      expect(unpaddedVm.artBoxNorm.x).toBeCloseTo(0.074, 2);
+      expect(unpaddedVm.artBoxNorm.y).toBeCloseTo(0.111, 2);
+      // Rules text box must be aligned at y: 0.625 (not overlapping type banner at 0.5635)
+      expect(unpaddedVm.textBoxNorm!.y).toBeCloseTo(0.625, 2);
+      expect(unpaddedVm.textBoxNorm!.h).toBeCloseTo(0.299, 2);
+      // Type banner guide must be at y: 0.5635
+      expect(unpaddedVm.typeBannerNorm!.y).toBeCloseTo(0.5635, 2);
+      expect(unpaddedVm.typeBannerNorm!.h).toBeCloseTo(0.0555, 2);
 
       // 2. Evaluate with padMpcBleed: true
       const paddedResult = runFullPrintPipeline({

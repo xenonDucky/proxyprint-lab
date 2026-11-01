@@ -156,9 +156,9 @@ async def export_print_ready_png(
         by = int(round(out_h * (effective_bleed_mm / (base_h_mm + 2.0 * effective_bleed_mm)))) if has_bleed else 0
         tw = out_w - bx * 2
         th = out_h - by * 2
-        ax0, ax1 = int(np.floor(bx + tw * 0.078)), int(np.ceil(bx + tw * 0.922))
-        ay0, ay1 = int(np.floor(by + th * 0.112)), int(np.ceil(by + th * 0.547))
-        ty0, ty1 = int(np.floor(by + th * 0.614)), int(np.ceil(by + th * 0.889))
+        ax0, ax1 = int(np.floor(bx + tw * 0.074)), int(np.ceil(bx + tw * 0.926))
+        ay0, ay1 = int(np.floor(by + th * 0.111)), int(np.ceil(by + th * 0.556))
+        ty0, ty1 = int(np.floor(by + th * 0.625)), int(np.ceil(by + th * 0.924))
 
         text_box_sharpen = float(adj.get("textBoxSharpen", 0.0))
 

@@ -43,11 +43,10 @@ export function drawCardContent(
   ctx.fillStyle = '#070709';
   ctx.fillRect(0, 0, W, H);
 
-  const borderT = trimW * 0.048;
-  const frameX = bleedX + borderT;
-  const frameY = bleedY + borderT;
-  const frameW = trimW - borderT * 2;
-  const frameH = trimH - borderT * 2;
+  const frameX = bleedX + trimW * 0.039;
+  const frameY = bleedY + trimH * 0.0285;
+  const frameW = trimW * 0.922;
+  const frameH = trimH * 0.8995;
 
   const themes: Record<string, any> = {
     abyssal_dragon: {
@@ -124,17 +123,17 @@ export function drawCardContent(
   fGrad.addColorStop(1, theme.frameGrad[2]);
   ctx.fillStyle = fGrad;
   ctx.beginPath();
-  ctx.roundRect(frameX, frameY, frameW, frameH, trimW * 0.03);
+  ctx.roundRect(frameX, frameY, frameW, frameH, trimW * 0.024);
   ctx.fill();
 
   ctx.strokeStyle = theme.pinline;
   ctx.lineWidth = Math.max(1.5, trimW * 0.005);
   ctx.stroke();
 
-  const artX = bleedX + trimW * 0.078;
-  const artY = bleedY + trimH * 0.112;
-  const artW = trimW * 0.844;
-  const artH = trimH * 0.435;
+  const artX = bleedX + trimW * 0.074;
+  const artY = bleedY + trimH * 0.111;
+  const artW = trimW * 0.852;
+  const artH = trimH * 0.445;
 
   ctx.save();
   ctx.beginPath();
@@ -320,10 +319,10 @@ export function drawCardContent(
   ctx.lineWidth = Math.max(2, trimW * 0.005);
   ctx.strokeRect(artX, artY, artW, artH);
 
-  const titleX = bleedX + trimW * 0.068;
-  const titleY = bleedY + trimH * 0.052;
-  const titleW = trimW * 0.864;
-  const titleH = trimH * 0.052;
+  const titleX = bleedX + trimW * 0.052;
+  const titleY = bleedY + trimH * 0.048;
+  const titleW = trimW * 0.896;
+  const titleH = trimH * 0.0565;
 
   ctx.fillStyle = theme.titleBg;
   ctx.beginPath();
@@ -365,9 +364,9 @@ export function drawCardContent(
   });
 
   const typeX = titleX;
-  const typeY = bleedY + trimH * 0.556;
+  const typeY = bleedY + trimH * 0.5635;
   const typeW = titleW;
-  const typeH = trimH * 0.048;
+  const typeH = trimH * 0.0555;
 
   ctx.fillStyle = theme.titleBg;
   ctx.beginPath();
@@ -381,9 +380,9 @@ export function drawCardContent(
   ctx.fillText(theme.type, typeX + typeW * 0.03, typeY + typeH * 0.53);
 
   const rulesX = artX;
-  const rulesY = bleedY + trimH * 0.614;
+  const rulesY = bleedY + trimH * 0.625;
   const rulesW = artW;
-  const rulesH = trimH * 0.275;
+  const rulesH = trimH * 0.299;
 
   ctx.fillStyle = theme.textBg;
   ctx.fillRect(rulesX, rulesY, rulesW, rulesH);
@@ -403,8 +402,8 @@ export function drawCardContent(
   if (theme.pt) {
     const ptW = trimW * 0.16;
     const ptH = trimH * 0.048;
-    const ptX = bleedX + trimW * 0.77;
-    const ptY = bleedY + trimH * 0.865;
+    const ptX = bleedX + trimW * 0.785;
+    const ptY = bleedY + trimH * 0.895;
     ctx.fillStyle = theme.titleBg;
     ctx.beginPath();
     ctx.roundRect(ptX, ptY, ptW, ptH, ptH * 0.35);
@@ -425,7 +424,7 @@ export function drawCardContent(
   ctx.fillText(
     'PROXYPRINT LAB CALIBRATION • NOT FOR SALE',
     bleedX + trimW * 0.08,
-    bleedY + trimH * 0.935
+    bleedY + trimH * 0.962
   );
 }
 

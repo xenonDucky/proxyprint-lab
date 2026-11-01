@@ -102,15 +102,15 @@ export function runFullPrintPipeline({
   const sBleedY = has3mmBleed ? Math.round(sharpH * padRatioY) : 0;
   const sTrimW = sharpW - sBleedX * 2;
   const sTrimH = sharpH - sBleedY * 2;
-  const sAx0 = Math.floor(sBleedX + sTrimW * 0.078);
-  const sAx1 = Math.ceil(sBleedX + sTrimW * 0.922);
-  const sAy0 = Math.floor(sBleedY + sTrimH * 0.112);
-  const sAy1 = Math.ceil(sBleedY + sTrimH * 0.547);
+  const sAx0 = Math.floor(sBleedX + sTrimW * 0.074);
+  const sAx1 = Math.ceil(sBleedX + sTrimW * 0.926);
+  const sAy0 = Math.floor(sBleedY + sTrimH * 0.111);
+  const sAy1 = Math.ceil(sBleedY + sTrimH * 0.556);
 
   const sTx0 = sAx0;
   const sTx1 = sAx1;
-  const sTy0 = Math.floor(sBleedY + sTrimH * 0.614);
-  const sTy1 = Math.ceil(sBleedY + sTrimH * 0.889);
+  const sTy0 = Math.floor(sBleedY + sTrimH * 0.625);
+  const sTy1 = Math.ceil(sBleedY + sTrimH * 0.924);
 
   let lapSum = 0;
   let lapSqSum = 0;
@@ -201,20 +201,25 @@ export function runFullPrintPipeline({
     const trimSpanW = AN_W - bleedOffsetX * 2;
     const trimSpanH = AN_H - bleedOffsetY * 2;
 
-    const maskX0 = Math.floor(bleedOffsetX + trimSpanW * 0.078);
-    const maskX1 = Math.ceil(bleedOffsetX + trimSpanW * 0.922);
-    const maskY0 = Math.floor(bleedOffsetY + trimSpanH * 0.112);
-    const maskY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.547);
+    const exactBleedX = has3mmBleed ? AN_W * padRatioX : 0;
+    const exactBleedY = has3mmBleed ? AN_H * padRatioY : 0;
+    const exactTrimW = AN_W - exactBleedX * 2;
+    const exactTrimH = AN_H - exactBleedY * 2;
+
+    const maskX0 = Math.floor(bleedOffsetX + trimSpanW * 0.074);
+    const maskX1 = Math.ceil(bleedOffsetX + trimSpanW * 0.926);
+    const maskY0 = Math.floor(bleedOffsetY + trimSpanH * 0.111);
+    const maskY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.556);
 
     const textX0 = maskX0;
     const textX1 = maskX1;
-    const textY0 = Math.floor(bleedOffsetY + trimSpanH * 0.614);
-    const textY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.889);
+    const textY0 = Math.floor(bleedOffsetY + trimSpanH * 0.625);
+    const textY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.924);
 
-    const typeX0 = Math.floor(bleedOffsetX + trimSpanW * 0.068);
-    const typeX1 = Math.ceil(bleedOffsetX + trimSpanW * 0.932);
-    const typeY0 = Math.floor(bleedOffsetY + trimSpanH * 0.556);
-    const typeY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.604);
+    const typeX0 = Math.floor(bleedOffsetX + trimSpanW * 0.052);
+    const typeX1 = Math.ceil(bleedOffsetX + trimSpanW * 0.948);
+    const typeY0 = Math.floor(bleedOffsetY + trimSpanH * 0.5635);
+    const typeY1 = Math.ceil(bleedOffsetY + trimSpanH * 0.619);
 
     // Apply Smart MTG Unsharp Mask independently to Art Box and Card Text Box
     const workPixels = new Uint8ClampedArray(rawPixels);
@@ -507,22 +512,28 @@ export function runFullPrintPipeline({
             inArtMask,
             patchContrastGrid,
             artBoxNorm: {
-              x: maskX0 / AN_W,
-              y: maskY0 / AN_H,
-              w: (maskX1 - maskX0) / AN_W,
-              h: (maskY1 - maskY0) / AN_H
+              x: (exactBleedX + exactTrimW * 0.074) / AN_W,
+              y: (exactBleedY + exactTrimH * 0.111) / AN_H,
+              w: (exactTrimW * 0.852) / AN_W,
+              h: (exactTrimH * 0.445) / AN_H
             },
             textBoxNorm: {
-              x: textX0 / AN_W,
-              y: textY0 / AN_H,
-              w: (textX1 - textX0) / AN_W,
-              h: (textY1 - textY0) / AN_H
+              x: (exactBleedX + exactTrimW * 0.074) / AN_W,
+              y: (exactBleedY + exactTrimH * 0.625) / AN_H,
+              w: (exactTrimW * 0.852) / AN_W,
+              h: (exactTrimH * 0.299) / AN_H
             },
             typeBannerNorm: {
-              x: typeX0 / AN_W,
-              y: typeY0 / AN_H,
-              w: (typeX1 - typeX0) / AN_W,
-              h: (typeY1 - typeY0) / AN_H
+              x: (exactBleedX + exactTrimW * 0.052) / AN_W,
+              y: (exactBleedY + exactTrimH * 0.5635) / AN_H,
+              w: (exactTrimW * 0.896) / AN_W,
+              h: (exactTrimH * 0.0555) / AN_H
+            },
+            titleBannerNorm: {
+              x: (exactBleedX + exactTrimW * 0.052) / AN_W,
+              y: (exactBleedY + exactTrimH * 0.048) / AN_H,
+              w: (exactTrimW * 0.896) / AN_W,
+              h: (exactTrimH * 0.0565) / AN_H
             }
           }
         : null

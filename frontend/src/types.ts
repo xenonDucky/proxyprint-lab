@@ -120,6 +120,7 @@ export interface VisualMaps {
   artBoxNorm: NormalizedRegion;
   textBoxNorm: NormalizedRegion | null;
   typeBannerNorm?: NormalizedRegion | null;
+  titleBannerNorm?: NormalizedRegion | null;
 }
 
 export interface EvaluationResult {

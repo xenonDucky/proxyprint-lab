@@ -137,20 +137,20 @@ def evaluate_color_and_tones(
     trim_span_w = an_w - bleed_offset_x * 2.0
     trim_span_h = an_h - bleed_offset_y * 2.0
 
-    mask_x0 = int(np.floor(bleed_offset_x + trim_span_w * 0.078))
-    mask_x1 = int(np.ceil(bleed_offset_x + trim_span_w * 0.922))
-    mask_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.112))
-    mask_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.547))
+    mask_x0 = int(np.floor(bleed_offset_x + trim_span_w * 0.074))
+    mask_x1 = int(np.ceil(bleed_offset_x + trim_span_w * 0.926))
+    mask_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.111))
+    mask_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.556))
 
-    text_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.614))
-    text_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.889))
+    text_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.625))
+    text_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.924))
     text_x0 = mask_x0
     text_x1 = mask_x1
 
-    type_x0 = int(np.floor(bleed_offset_x + trim_span_w * 0.068))
-    type_x1 = int(np.ceil(bleed_offset_x + trim_span_w * 0.932))
-    type_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.556))
-    type_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.604))
+    type_x0 = int(np.floor(bleed_offset_x + trim_span_w * 0.052))
+    type_x1 = int(np.ceil(bleed_offset_x + trim_span_w * 0.948))
+    type_y0 = int(np.floor(bleed_offset_y + trim_span_h * 0.5635))
+    type_y1 = int(np.ceil(bleed_offset_y + trim_span_h * 0.619))
 
     if input_mode == "artwork_only":
         in_art_mask = np.ones((an_h, an_w), dtype=bool)
@@ -418,8 +418,8 @@ def optimize_adjustments_coordinate_search(
         by = sub_h * (3.0 / 94.0) if has_3mm_bleed else 0.0
         tw = sub_w - bx * 2.0
         th = sub_h - by * 2.0
-        mx0, mx1 = int(bx + tw * 0.078), int(bx + tw * 0.922)
-        my0, my1 = int(by + th * 0.112), int(by + th * 0.547)
+        mx0, mx1 = int(bx + tw * 0.074), int(bx + tw * 0.926)
+        my0, my1 = int(by + th * 0.111), int(by + th * 0.556)
         art_L = L_sub[my0 : my1 + 1, mx0 : mx1 + 1]
 
     p10_l = float(np.percentile(art_L, 10))
@@ -669,10 +669,10 @@ def run_full_backend_pipeline(
     sharp_trim_h = sharp_h - sharp_bleed_y * 2.0
 
     # 1. Art Box Region
-    x_start = max(0, int(np.floor(sharp_bleed_x + sharp_trim_w * 0.078)))
-    x_end = min(sharp_w, int(np.ceil(sharp_bleed_x + sharp_trim_w * 0.922)))
-    y_start = max(0, int(np.floor(sharp_bleed_y + sharp_trim_h * 0.112)))
-    y_end = min(sharp_h, int(np.ceil(sharp_bleed_y + sharp_trim_h * 0.547)))
+    x_start = max(0, int(np.floor(sharp_bleed_x + sharp_trim_w * 0.074)))
+    x_end = min(sharp_w, int(np.ceil(sharp_bleed_x + sharp_trim_w * 0.926)))
+    y_start = max(0, int(np.floor(sharp_bleed_y + sharp_trim_h * 0.111)))
+    y_end = min(sharp_h, int(np.ceil(sharp_bleed_y + sharp_trim_h * 0.556)))
     art_gray = gray[y_start:y_end, x_start:x_end]
 
     lap = cv2.Laplacian(art_gray, cv2.CV_32F, ksize=1)
@@ -685,9 +685,9 @@ def run_full_backend_pipeline(
     effective_optical_ppi = min(1200, int(round(nominal_ppi * optical_sharpness_factor)))
     is_likely_upscaled = bool(nominal_ppi >= 250 and optical_sharpness_factor < 0.68)
 
-    # 2. Card Text Box Region (Rules Text Box: y 0.614..0.889)
-    ty_start = max(0, int(np.floor(sharp_bleed_y + sharp_trim_h * 0.614)))
-    ty_end = min(sharp_h, int(np.ceil(sharp_bleed_y + sharp_trim_h * 0.889)))
+    # 2. Card Text Box Region (Rules Text Box: y 0.625..0.924)
+    ty_start = max(0, int(np.floor(sharp_bleed_y + sharp_trim_h * 0.625)))
+    ty_end = min(sharp_h, int(np.ceil(sharp_bleed_y + sharp_trim_h * 0.924)))
     text_gray = gray[ty_start:ty_end, x_start:x_end]
     if text_gray.size > 16:
         text_lap = cv2.Laplacian(text_gray, cv2.CV_32F, ksize=1)

@@ -86,13 +86,13 @@ export function renderPreviewCanvases({
 
     const trimSpanW = w - bleedPxX * 2;
     const trimSpanH = h - bleedPxY * 2;
-    // MTG card frame black border is uniform in physical millimeters (~3mm on all 4 sides).
-    // In normalized trim space: Width margin is 0.048 (3mm / 63mm). Height margin is 0.048 * (baseW / baseH).
-    const safeOffsetX = bleedPxX + trimSpanW * 0.048;
-    const safeOffsetY = bleedPxY + trimSpanH * (0.048 * (baseW / baseH));
-    const safeWidth = trimSpanW * (1 - 2 * 0.048);
-    const safeHeight = trimSpanH * (1 - 2 * 0.048 * (baseW / baseH));
-    const safeRadius = trimSpanW * 0.03;
+    // Real M15 MTG outer colored frame inside the black border:
+    // x = 0.039..0.961 (w = 0.922), y = 0.0285..0.928 (h = 0.8995)
+    const safeOffsetX = bleedPxX + trimSpanW * 0.039;
+    const safeOffsetY = bleedPxY + trimSpanH * 0.0285;
+    const safeWidth = trimSpanW * 0.922;
+    const safeHeight = trimSpanH * 0.8995;
+    const safeRadius = trimSpanW * 0.024;
 
     ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
     ctx.lineWidth = 1.2;
@@ -106,39 +106,69 @@ export function renderPreviewCanvases({
     ctx.stroke();
 
     if (inputMode === 'full_card' && analysis.current.visualMaps) {
-      const ab = analysis.current.visualMaps.artBoxNorm;
+      // Title Bar Guide (x: 0.052..0.948, y: 0.048..0.1045)
+      const tlX = bleedPxX + trimSpanW * 0.052;
+      const tlY = bleedPxY + trimSpanH * 0.048;
+      const tlW = trimSpanW * 0.896;
+      const tlH = trimSpanH * 0.0565;
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(tlX, tlY, tlW, tlH, tlH * 0.35);
+      } else {
+        ctx.rect(tlX, tlY, tlW, tlH);
+      }
+      ctx.stroke();
+
+      // Art Analysis Region Guide (x: 0.074..0.926, y: 0.111..0.556)
+      const abX = bleedPxX + trimSpanW * 0.074;
+      const abY = bleedPxY + trimSpanH * 0.111;
+      const abW = trimSpanW * 0.852;
+      const abH = trimSpanH * 0.445;
       ctx.strokeStyle = 'rgba(251, 191, 36, 0.95)';
       ctx.lineWidth = 2;
       ctx.setLineDash([6, 3]);
-      ctx.strokeRect(ab.x * w, ab.y * h, ab.w * w, ab.h * h);
+      ctx.strokeRect(abX, abY, abW, abH);
 
       ctx.fillStyle = 'rgba(251, 191, 36, 0.9)';
       ctx.font = 'bold 10px sans-serif';
-      ctx.fillText('ART ANALYSIS REGION', ab.x * w + 6, ab.y * h + 13);
+      ctx.fillText('ART ANALYSIS REGION', abX + 6, abY + 13);
 
-      const tb = analysis.current.visualMaps.textBoxNorm;
-      if (tb) {
-        ctx.strokeStyle = 'rgba(167, 139, 250, 0.9)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([4, 3]);
-        ctx.strokeRect(tb.x * w, tb.y * h, tb.w * w, tb.h * h);
-
-        ctx.fillStyle = 'rgba(196, 181, 253, 0.95)';
-        ctx.font = 'bold 9px sans-serif';
-        ctx.fillText('RULES TEXT BOX', tb.x * w + 6, tb.y * h + 12);
+      // Type Line Guide (x: 0.052..0.948, y: 0.5635..0.619)
+      const tyX = bleedPxX + trimSpanW * 0.052;
+      const tyY = bleedPxY + trimSpanH * 0.5635;
+      const tyW = trimSpanW * 0.896;
+      const tyH = trimSpanH * 0.0555;
+      ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(tyX, tyY, tyW, tyH, tyH * 0.35);
+      } else {
+        ctx.rect(tyX, tyY, tyW, tyH);
       }
+      ctx.stroke();
 
-      const ty = analysis.current.visualMaps.typeBannerNorm;
-      if (ty) {
-        ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)';
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([3, 3]);
-        ctx.strokeRect(ty.x * w, ty.y * h, ty.w * w, ty.h * h);
+      ctx.fillStyle = 'rgba(125, 211, 252, 0.9)';
+      ctx.font = 'bold 8px sans-serif';
+      ctx.fillText('TYPE LINE', tyX + 8, tyY + 11);
 
-        ctx.fillStyle = 'rgba(125, 211, 252, 0.9)';
-        ctx.font = 'bold 8px sans-serif';
-        ctx.fillText('TYPE LINE', ty.x * w + 6, ty.y * h + 10);
-      }
+      // Rules Text Box Guide (x: 0.074..0.926, y: 0.625..0.924)
+      const tbX = bleedPxX + trimSpanW * 0.074;
+      const tbY = bleedPxY + trimSpanH * 0.625;
+      const tbW = trimSpanW * 0.852;
+      const tbH = trimSpanH * 0.299;
+      ctx.strokeStyle = 'rgba(167, 139, 250, 0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 3]);
+      ctx.strokeRect(tbX, tbY, tbW, tbH);
+
+      ctx.fillStyle = 'rgba(196, 181, 253, 0.95)';
+      ctx.font = 'bold 9px sans-serif';
+      ctx.fillText('RULES TEXT BOX', tbX + 6, tbY + 12);
     }
 
     ctx.restore();

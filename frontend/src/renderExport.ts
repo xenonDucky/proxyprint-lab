@@ -48,15 +48,15 @@ export function renderCardToPrintReadyCanvas(
   const bleedOffY = effectiveBleed ? Math.round(outH * padRatioY) : 0;
   const trimW = outW - bleedOffX * 2;
   const trimH = outH - bleedOffY * 2;
-  const ax0 = Math.floor(bleedOffX + trimW * 0.078);
-  const ax1 = Math.ceil(bleedOffX + trimW * 0.922);
-  const ay0 = Math.floor(bleedOffY + trimH * 0.112);
-  const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
+  const ax0 = Math.floor(bleedOffX + trimW * 0.074);
+  const ax1 = Math.ceil(bleedOffX + trimW * 0.926);
+  const ay0 = Math.floor(bleedOffY + trimH * 0.111);
+  const ay1 = Math.ceil(bleedOffY + trimH * 0.556);
 
   const tx0 = ax0;
   const tx1 = ax1;
-  const ty0 = Math.floor(bleedOffY + trimH * 0.614);
-  const ty1 = Math.ceil(bleedOffY + trimH * 0.889);
+  const ty0 = Math.floor(bleedOffY + trimH * 0.625);
+  const ty1 = Math.ceil(bleedOffY + trimH * 0.924);
 
   if ((adjustments.sharpen || 0) > 0) {
     applyUnsharpMaskRgba(
@@ -196,15 +196,15 @@ export function generateBatchThumbnails(
   const bleedOffY = effectiveBleed ? Math.round(TH * padRatioY) : 0;
   const trimW = TW - bleedOffX * 2;
   const trimH = TH - bleedOffY * 2;
-  const ax0 = Math.floor(bleedOffX + trimW * 0.078);
-  const ax1 = Math.ceil(bleedOffX + trimW * 0.922);
-  const ay0 = Math.floor(bleedOffY + trimH * 0.112);
-  const ay1 = Math.ceil(bleedOffY + trimH * 0.547);
+  const ax0 = Math.floor(bleedOffX + trimW * 0.074);
+  const ax1 = Math.ceil(bleedOffX + trimW * 0.926);
+  const ay0 = Math.floor(bleedOffY + trimH * 0.111);
+  const ay1 = Math.ceil(bleedOffY + trimH * 0.556);
 
   const tx0 = ax0;
   const tx1 = ax1;
-  const ty0 = Math.floor(bleedOffY + trimH * 0.614);
-  const ty1 = Math.ceil(bleedOffY + trimH * 0.889);
+  const ty0 = Math.floor(bleedOffY + trimH * 0.625);
+  const ty1 = Math.ceil(bleedOffY + trimH * 0.924);
 
   if ((adjustments.sharpen || 0) > 0) {
     applyUnsharpMaskRgba(
