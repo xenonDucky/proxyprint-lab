@@ -71,8 +71,8 @@ export default function App() {
     saturation: 0,
     sharpen: 0,
     textBoxSharpen: 0,
-    artTargetDpi: DPI_BENCHMARKS.min,
-    textTargetDpi: DPI_BENCHMARKS.min
+    artTargetDpi: undefined,
+    textTargetDpi: undefined
   });
   const [pdfCards, setPdfCards] = useState<PdfCardItem[]>([]);
 
@@ -118,8 +118,8 @@ export default function App() {
       saturation: 0,
       sharpen: 0,
       textBoxSharpen: 0,
-      artTargetDpi: DPI_BENCHMARKS.min,
-      textTargetDpi: DPI_BENCHMARKS.min
+      artTargetDpi: undefined,
+      textTargetDpi: undefined
     });
   }, [activePresetId]);
 
@@ -146,8 +146,8 @@ export default function App() {
           saturation: 0,
           sharpen: 0,
           textBoxSharpen: 0,
-          artTargetDpi: DPI_BENCHMARKS.min,
-          textTargetDpi: DPI_BENCHMARKS.min
+          artTargetDpi: undefined,
+          textTargetDpi: undefined
         });
       };
       img.src = e.target?.result as string;
@@ -262,12 +262,18 @@ export default function App() {
         bleedMm: batchBleedMm
       })!;
 
+      const cardMatchedParams: AdjustmentParams = {
+        ...zeroParams,
+        artTargetDpi: initialAnalysis.geometry.effectiveOpticalPpi,
+        textTargetDpi: initialAnalysis.geometry.textOpticalPpi
+      };
+
       const thumbs = generateBatchThumbnails(
         c,
         batchBleedMm > 0,
         initialAnalysis.geometry.has3mmBleed,
         batchInputMode,
-        zeroParams,
+        cardMatchedParams,
         initialAnalysis.printer3DLut,
         batchBleedMm,
         batchCardStandard
@@ -283,7 +289,7 @@ export default function App() {
         cardStandardId: batchCardStandardId,
         printerProfileId: batchPrinterProfileId,
         isOptimized: false,
-        adjustments: zeroParams,
+        adjustments: cardMatchedParams,
         baselineScores: initialAnalysis.baseline.scores,
         optimizedScores: initialAnalysis.current.scores,
         geometry: initialAnalysis.geometry,
@@ -509,8 +515,8 @@ export default function App() {
       saturation: item.adjustments.saturation,
       sharpen: item.adjustments.sharpen || 0,
       textBoxSharpen: item.adjustments.textBoxSharpen || 0,
-      artTargetDpi: item.adjustments.artTargetDpi ?? DPI_BENCHMARKS.min,
-      textTargetDpi: item.adjustments.textTargetDpi ?? DPI_BENCHMARKS.min
+      artTargetDpi: item.adjustments.artTargetDpi ?? item.geometry.effectiveOpticalPpi,
+      textTargetDpi: item.adjustments.textTargetDpi ?? item.geometry.textOpticalPpi
     });
     setStudioMode('single');
   };
@@ -632,7 +638,11 @@ export default function App() {
       cardStandardId,
       printerProfileId,
       isOptimized: true,
-      adjustments: { ...adjustments },
+      adjustments: {
+        ...adjustments,
+        artTargetDpi: adjustments.artTargetDpi ?? analysis.geometry.effectiveOpticalPpi,
+        textTargetDpi: adjustments.textTargetDpi ?? analysis.geometry.textOpticalPpi
+      },
       baselineScores: analysis.baseline.scores,
       optimizedScores: analysis.current.scores,
       geometry: analysis.geometry,
@@ -664,8 +674,8 @@ export default function App() {
       saturation: 0,
       sharpen: 0,
       textBoxSharpen: 0,
-      artTargetDpi: DPI_BENCHMARKS.min,
-      textTargetDpi: DPI_BENCHMARKS.min
+      artTargetDpi: analysis ? analysis.geometry.effectiveOpticalPpi : undefined,
+      textTargetDpi: analysis ? analysis.geometry.textOpticalPpi : undefined
     });
   };
 
@@ -676,9 +686,7 @@ export default function App() {
     adjustments.contrast !== 0 ||
     adjustments.saturation !== 0 ||
     (adjustments.sharpen || 0) !== 0 ||
-    (adjustments.textBoxSharpen || 0) !== 0 ||
-    (adjustments.artTargetDpi ?? DPI_BENCHMARKS.min) > DPI_BENCHMARKS.min ||
-    (adjustments.textTargetDpi ?? DPI_BENCHMARKS.min) > DPI_BENCHMARKS.min;
+    (adjustments.textBoxSharpen || 0) !== 0;
 
   if (!analysis) {
     return (

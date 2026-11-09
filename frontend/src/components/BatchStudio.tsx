@@ -253,16 +253,14 @@ export function BatchStudio({
                             Sat: {item.adjustments.saturation >= 0 ? `+${item.adjustments.saturation}` : item.adjustments.saturation}%
                           </span>
                         )}
-                        {((item.adjustments.sharpen || 0) > 0 ||
-                          (item.adjustments.artTargetDpi ?? 300) > 300) && (
+                        {(item.adjustments.sharpen || 0) > 0 && (
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-300">
-                            Art: {item.adjustments.artTargetDpi ?? DPI_BENCHMARKS.ideal} DPI (+{item.adjustments.sharpen}%)
+                            Art: {item.adjustments.artTargetDpi ?? item.geometry.effectiveOpticalPpi} DPI (+{item.adjustments.sharpen}%)
                           </span>
                         )}
-                        {((item.adjustments.textBoxSharpen || 0) > 0 ||
-                          (item.adjustments.textTargetDpi ?? 300) > 300) && (
+                        {(item.adjustments.textBoxSharpen || 0) > 0 && (
                           <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-violet-500/15 border border-violet-500/30 text-violet-300">
-                            Text: {item.adjustments.textTargetDpi ?? DPI_BENCHMARKS.ideal} DPI (+{item.adjustments.textBoxSharpen}%)
+                            Text: {item.adjustments.textTargetDpi ?? item.geometry.textOpticalPpi} DPI (+{item.adjustments.textBoxSharpen}%)
                           </span>
                         )}
                       </>

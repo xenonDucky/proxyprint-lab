@@ -437,8 +437,8 @@ def optimize_adjustments_coordinate_search(
             "saturation": float(np.clip(round(p["saturation"]), -28, 25)),
             "sharpen": float(np.clip(round(p.get("sharpen", 0.0)), 0, 80)),
             "textBoxSharpen": float(np.clip(round(p.get("textBoxSharpen", 0.0)), 0, 80)),
-            "artTargetDpi": float(np.clip(round(p.get("artTargetDpi", 600.0)), 300, 1200)),
-            "textTargetDpi": float(np.clip(round(p.get("textTargetDpi", 600.0)), 300, 1200)),
+            "artTargetDpi": float(np.clip(round(p.get("artTargetDpi", art_optical_ppi)), 0, 1200)),
+            "textTargetDpi": float(np.clip(round(p.get("textTargetDpi", text_optical_ppi)), 0, 1200)),
         }
 
     def eval_obj(adj: Dict[str, float]) -> float:
@@ -487,8 +487,8 @@ def optimize_adjustments_coordinate_search(
             "saturation": 0.0,
             "sharpen": 0.0,
             "textBoxSharpen": 0.0,
-            "artTargetDpi": 300.0,
-            "textTargetDpi": 300.0,
+            "artTargetDpi": float(round(art_optical_ppi)),
+            "textTargetDpi": float(round(text_optical_ppi)),
         },
         clamp_params(
             {

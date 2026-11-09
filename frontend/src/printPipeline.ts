@@ -431,14 +431,14 @@ export function runFullPrintPipeline({
     // STAGE 6: BOTTLENECK-CAPPED FINAL SUITABILITY SCORE
     // ------------------------------------------------------------------------
     const effectiveArtPpi =
-      adj.artTargetDpi && adj.artTargetDpi > DPI_BENCHMARKS.min
+      adj.artTargetDpi && adj.artTargetDpi > effectiveOpticalPpi
         ? Math.min(DPI_BENCHMARKS.max, Math.max(effectiveOpticalPpi, adj.artTargetDpi))
         : sharpenAmt > 0
         ? Math.min(DPI_BENCHMARKS.max, Math.max(effectiveOpticalPpi, DPI_BENCHMARKS.ideal))
         : effectiveOpticalPpi;
 
     const effectiveTextPpi =
-      adj.textTargetDpi && adj.textTargetDpi > DPI_BENCHMARKS.min
+      adj.textTargetDpi && adj.textTargetDpi > textOpticalPpi
         ? Math.min(DPI_BENCHMARKS.max, Math.max(textOpticalPpi, adj.textTargetDpi))
         : textSharpenAmt > 0
         ? Math.min(DPI_BENCHMARKS.max, Math.max(textOpticalPpi, DPI_BENCHMARKS.ideal))

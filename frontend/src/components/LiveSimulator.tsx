@@ -264,23 +264,19 @@ export function LiveSimulator({
                   {geom.effectiveOpticalPpi} → {curMetrics.effectiveArtPpi} DPI
                 </span>
                 <span className="font-mono text-amber-300 font-bold">
-                  {adjustments.artTargetDpi ??
-                    ((adjustments.sharpen || 0) > 0 ? DPI_BENCHMARKS.ideal : DPI_BENCHMARKS.min)}{' '}
-                  DPI (+{adjustments.sharpen || 0}%)
+                  {adjustments.artTargetDpi ?? geom.effectiveOpticalPpi} DPI (+
+                  {adjustments.sharpen || 0}%)
                 </span>
               </div>
             </div>
             <input
               type="range"
-              min={DPI_BENCHMARKS.min}
+              min={Math.min(DPI_BENCHMARKS.min, geom.effectiveOpticalPpi)}
               max={DPI_BENCHMARKS.max}
-              step={10}
-              value={
-                adjustments.artTargetDpi ??
-                ((adjustments.sharpen || 0) > 0 ? DPI_BENCHMARKS.ideal : DPI_BENCHMARKS.min)
-              }
+              step={1}
+              value={adjustments.artTargetDpi ?? geom.effectiveOpticalPpi}
               onChange={(e) => {
-                const targetDpi = Number(e.target.value);
+                const targetDpi = Math.max(geom.effectiveOpticalPpi, Number(e.target.value));
                 const computedSharpen = computeSharpenForTargetDpi(
                   geom.effectiveOpticalPpi,
                   targetDpi,
@@ -295,7 +291,11 @@ export function LiveSimulator({
               className="w-full accent-amber-500 cursor-pointer"
             />
             <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-              <span>Min: {DPI_BENCHMARKS.min} DPI</span>
+              <span>
+                {geom.effectiveOpticalPpi < DPI_BENCHMARKS.min
+                  ? `Card: ${geom.effectiveOpticalPpi} DPI (Min: ${DPI_BENCHMARKS.min})`
+                  : `Min: ${DPI_BENCHMARKS.min} DPI (Card: ${geom.effectiveOpticalPpi})`}
+              </span>
               <span className="text-amber-300 font-semibold">
                 Ideal: {DPI_BENCHMARKS.ideal} DPI
               </span>
@@ -325,23 +325,19 @@ export function LiveSimulator({
                   {geom.textOpticalPpi} → {curMetrics.effectiveTextPpi} DPI
                 </span>
                 <span className="font-mono text-violet-300 font-bold">
-                  {adjustments.textTargetDpi ??
-                    ((adjustments.textBoxSharpen || 0) > 0 ? DPI_BENCHMARKS.ideal : DPI_BENCHMARKS.min)}{' '}
-                  DPI (+{adjustments.textBoxSharpen || 0}%)
+                  {adjustments.textTargetDpi ?? geom.textOpticalPpi} DPI (+
+                  {adjustments.textBoxSharpen || 0}%)
                 </span>
               </div>
             </div>
             <input
               type="range"
-              min={DPI_BENCHMARKS.min}
+              min={Math.min(DPI_BENCHMARKS.min, geom.textOpticalPpi)}
               max={DPI_BENCHMARKS.max}
-              step={10}
-              value={
-                adjustments.textTargetDpi ??
-                ((adjustments.textBoxSharpen || 0) > 0 ? DPI_BENCHMARKS.ideal : DPI_BENCHMARKS.min)
-              }
+              step={1}
+              value={adjustments.textTargetDpi ?? geom.textOpticalPpi}
               onChange={(e) => {
-                const targetDpi = Number(e.target.value);
+                const targetDpi = Math.max(geom.textOpticalPpi, Number(e.target.value));
                 const computedTextSharpen = computeSharpenForTargetDpi(
                   geom.textOpticalPpi,
                   targetDpi,
@@ -356,7 +352,11 @@ export function LiveSimulator({
               className="w-full accent-violet-500 cursor-pointer"
             />
             <div className="flex justify-between text-[10px] text-slate-400 font-mono">
-              <span>Min: {DPI_BENCHMARKS.min} DPI</span>
+              <span>
+                {geom.textOpticalPpi < DPI_BENCHMARKS.min
+                  ? `Card: ${geom.textOpticalPpi} DPI (Min: ${DPI_BENCHMARKS.min})`
+                  : `Min: ${DPI_BENCHMARKS.min} DPI (Card: ${geom.textOpticalPpi})`}
+              </span>
               <span className="text-violet-300 font-semibold">
                 Ideal: {DPI_BENCHMARKS.ideal} DPI
               </span>

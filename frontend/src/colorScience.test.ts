@@ -106,17 +106,19 @@ describe('ProxyPrint Lab Color Science & 6-Stage Math', () => {
       printerProfile: PRINTER_PROFILES.home_matte,
       printer3DLut: lut,
       resolutionScore: 95,
+      artOpticalPpi: 245,
+      textOpticalPpi: 268,
       applyUserAdjustmentsFn: applyUserAdjustments
     });
 
     // For a dark muddy card on Home Matte paper, the optimizer should lift shadows & boost contrast
     expect(opt.shadowLift).toBeGreaterThan(20);
     expect(opt.gamma).toBeGreaterThanOrEqual(0.95);
-    // Sharpening sliders remain 0 during auto-optimization
+    // Sharpening sliders remain 0 during auto-optimization and match the card's native sharpness
     expect(opt.sharpen).toBe(0);
     expect(opt.textBoxSharpen).toBe(0);
-    expect(opt.artTargetDpi).toBe(DPI_BENCHMARKS.min);
-    expect(opt.textTargetDpi).toBe(DPI_BENCHMARKS.min);
+    expect(opt.artTargetDpi).toBe(245);
+    expect(opt.textTargetDpi).toBe(268);
   });
 
   it('builds a standards-compliant ZIP archive for batch card export', async () => {

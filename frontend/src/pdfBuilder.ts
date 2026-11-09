@@ -5,9 +5,9 @@ export type PaperSize = 'letter' | 'a4';
 export interface PdfCardInput {
   id: string;
   fileName: string;
-  canvas: HTMLCanvasElement;
+  canvas: HTMLCanvasElement | null;
   quantity: number;
-  adjustments: AdjustmentParams;
+  adjustments?: AdjustmentParams;
 }
 
 export interface PdfSheetConfig {
@@ -114,8 +114,8 @@ export async function createProxyPrintPdf(options: PdfGenerationOptions): Promis
   const marginXPt = Math.max(0, (paper.wPt - gridWPt) / 2);
   const marginYPt = Math.max(0, (paper.hPt - gridHPt) / 2);
 
-  // Flatten card items according to their selected quantities
-  const flattenedCards: HTMLCanvasElement[] = [];
+  // Flatten card items according to their selected quantities (null represents an empty slot)
+  const flattenedCards: (HTMLCanvasElement | null)[] = [];
   for (const card of cards) {
     const count = Math.max(1, card.quantity || 1);
     for (let q = 0; q < count; q++) {
@@ -123,8 +123,8 @@ export async function createProxyPrintPdf(options: PdfGenerationOptions): Promis
     }
   }
 
-  const totalCards = Math.max(1, flattenedCards.length);
-  const totalPages = Math.ceil(totalCards / 9);
+  const totalSlots = Math.max(1, flattenedCards.length);
+  const totalPages = Math.ceil(totalSlots / 9);
 
   // PDF Generation State
   const parts: (Uint8Array | string)[] = [];
@@ -172,6 +172,7 @@ export async function createProxyPrintPdf(options: PdfGenerationOptions): Promis
 
   for (let i = 0; i < flattenedCards.length; i++) {
     const cvs = flattenedCards[i];
+    if (!cvs) continue;
     if (!canvasToImageObj.has(cvs)) {
       if (onProgress) {
         onProgress(i + 1, flattenedCards.length);
@@ -216,6 +217,7 @@ export async function createProxyPrintPdf(options: PdfGenerationOptions): Promis
     // Draw 3x3 cards
     for (let slot = 0; slot < pageCanvases.length; slot++) {
       const cvs = pageCanvases[slot];
+      if (!cvs) continue;
       const imgInfo = canvasToImageObj.get(cvs)!;
       const resName = `Im${slot}`;
       pageXObjects.push(`/${resName} ${imgInfo.objId} 0 R`);

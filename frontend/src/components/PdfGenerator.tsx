@@ -11,6 +11,9 @@ import {
   Sparkles,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
+  GripVertical,
   Info,
   Maximize2
 } from 'lucide-react';
@@ -65,22 +68,66 @@ export function PdfGenerator({
   const [isGeneratingPdf, setIsGeneratingPdf] = useState<boolean>(false);
   const [pdfProgress, setPdfProgress] = useState<{ current: number; total: number } | null>(null);
 
+  // Drag-and-drop reordering state for queue list and 3x3 sheet preview
+  const [draggedIdx, setDraggedIdx] = useState<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [sheetDragSlot, setSheetDragSlot] = useState<number | null>(null);
+  const [sheetHoverSlot, setSheetHoverSlot] = useState<number | null>(null);
+
   const previewCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
-  // Flattened cards across all quantities
-  const flattenedCards = useMemo(() => {
-    const list: PdfCardItem[] = [];
+  // Build sparse 3x3 slot layout so any card can be placed in any slot (1..9) regardless of card count
+  const { slotList, itemSlotsMap, totalCards, totalPages } = useMemo(() => {
+    const occupied = new Map<number, PdfCardItem>();
+    const map = new Map<string, number[]>();
+
+    // First pass: place single-quantity cards that have an explicit slotIndex
     for (const item of pdfCards) {
       const q = Math.max(1, item.quantity || 1);
-      for (let i = 0; i < q; i++) {
-        list.push(item);
+      if (q === 1 && item.slotIndex !== undefined && item.slotIndex >= 0 && !occupied.has(item.slotIndex)) {
+        occupied.set(item.slotIndex, item);
+        map.set(item.id, [item.slotIndex]);
       }
     }
-    return list;
-  }, [pdfCards]);
 
-  const totalCards = flattenedCards.length;
-  const totalPages = Math.max(1, Math.ceil(totalCards / 9));
+    // Second pass: place multi-quantity cards or cards without an explicit free slotIndex
+    let nextFree = 0;
+    for (const item of pdfCards) {
+      if (map.has(item.id)) continue;
+      const q = Math.max(1, item.quantity || 1);
+      const assigned: number[] = [];
+      let searchStart = item.slotIndex !== undefined && item.slotIndex >= 0 ? item.slotIndex : nextFree;
+      for (let i = 0; i < q; i++) {
+        while (occupied.has(searchStart)) {
+          searchStart++;
+        }
+        occupied.set(searchStart, item);
+        assigned.push(searchStart);
+        searchStart++;
+      }
+      map.set(item.id, assigned);
+    }
+
+    let maxSlot = 8;
+    for (const s of occupied.keys()) {
+      if (s > maxSlot) maxSlot = s;
+    }
+    const pages = Math.max(1, Math.ceil((maxSlot + 1) / 9));
+    const totalSlots = pages * 9;
+    const list: (PdfCardItem | null)[] = new Array(totalSlots).fill(null);
+    let count = 0;
+    for (const [s, item] of occupied.entries()) {
+      list[s] = item;
+      count++;
+    }
+
+    return {
+      slotList: list,
+      itemSlotsMap: map,
+      totalCards: count,
+      totalPages: pages
+    };
+  }, [pdfCards]);
 
   // Clamp current page if totalPages shrinks
   useEffect(() => {
@@ -89,17 +136,62 @@ export function PdfGenerator({
     }
   }, [currentPage, totalPages]);
 
+  // Helper: normalize pdfCards into explicit slot-indexed items and move/swap a card from one global slot to another
+  const handleSetCardGlobalSlot = (fromGlobalSlot: number, toGlobalSlot: number) => {
+    const clampedTarget = Math.max(0, toGlobalSlot);
+    if (fromGlobalSlot === clampedTarget) return;
+
+    setPdfCards((prev) => {
+      // Expand current layout so every copy has its explicit slotIndex
+      const occupied = new Map<number, PdfCardItem>();
+      let nextFree = 0;
+      for (const item of prev) {
+        const q = Math.max(1, item.quantity || 1);
+        if (q === 1 && item.slotIndex !== undefined && item.slotIndex >= 0 && !occupied.has(item.slotIndex)) {
+          occupied.set(item.slotIndex, { ...item, quantity: 1, slotIndex: item.slotIndex });
+        } else {
+          let search = item.slotIndex !== undefined && item.slotIndex >= 0 ? item.slotIndex : nextFree;
+          for (let i = 0; i < q; i++) {
+            while (occupied.has(search)) search++;
+            occupied.set(search, {
+              ...item,
+              id: i === 0 ? item.id : `${item.id}_copy_${i}_${Date.now()}`,
+              quantity: 1,
+              slotIndex: search
+            });
+            search++;
+          }
+        }
+      }
+
+      const movingItem = occupied.get(fromGlobalSlot);
+      if (!movingItem) return prev;
+
+      const targetItem = occupied.get(clampedTarget);
+      if (targetItem) {
+        // Swap the two cards' positions
+        occupied.set(fromGlobalSlot, { ...targetItem, slotIndex: fromGlobalSlot });
+        occupied.set(clampedTarget, { ...movingItem, slotIndex: clampedTarget });
+      } else {
+        // Move into the empty slot
+        occupied.delete(fromGlobalSlot);
+        occupied.set(clampedTarget, { ...movingItem, slotIndex: clampedTarget });
+      }
+
+      return Array.from(occupied.values()).sort((a, b) => (a.slotIndex ?? 0) - (b.slotIndex ?? 0));
+    });
+  };
+
   // Adjust quantity
   const handleUpdateQuantity = (id: string, delta: number) => {
     setPdfCards((prev) =>
-      prev
-        .map((item) => {
-          if (item.id === id) {
-            const newQ = Math.max(1, (item.quantity || 1) + delta);
-            return { ...item, quantity: newQ };
-          }
-          return item;
-        })
+      prev.map((item) => {
+        if (item.id === id) {
+          const newQ = Math.max(1, (item.quantity || 1) + delta);
+          return { ...item, quantity: newQ };
+        }
+        return item;
+      })
     );
   };
 
@@ -115,6 +207,36 @@ export function PdfGenerator({
 
   const handleClearAll = () => {
     setPdfCards([]);
+  };
+
+  // Move a card's slot position up (-1) or down (+1), even when there is only 1 card
+  const handleMoveCardSlot = (itemId: string, direction: -1 | 1) => {
+    const slots = itemSlotsMap.get(itemId);
+    if (!slots || slots.length === 0) return;
+    const currentSlot = slots[0];
+    const targetSlot = Math.max(0, currentSlot + direction);
+    handleSetCardGlobalSlot(currentSlot, targetSlot);
+  };
+
+  // Reorder card via drag and drop in the queue list
+  const handleReorderQueue = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex) return;
+    const fromItem = pdfCards[fromIndex];
+    const toItem = pdfCards[toIndex];
+    if (!fromItem || !toItem) return;
+    const fromSlot = itemSlotsMap.get(fromItem.id)?.[0];
+    const toSlot = itemSlotsMap.get(toItem.id)?.[0];
+    if (fromSlot !== undefined && toSlot !== undefined) {
+      handleSetCardGlobalSlot(fromSlot, toSlot);
+    }
+  };
+
+  // Move or swap a card onto ANY slot (0..8) on the current 3x3 sheet preview
+  const handleReorderSheetSlot = (fromSlotOnPage: number, toSlotOnPage: number) => {
+    if (fromSlotOnPage === toSlotOnPage) return;
+    const globalFrom = (currentPage - 1) * 9 + fromSlotOnPage;
+    const globalTo = (currentPage - 1) * 9 + toSlotOnPage;
+    handleSetCardGlobalSlot(globalFrom, globalTo);
   };
 
   // Render the interactive 3x3 sheet canvas preview for the current page
@@ -148,7 +270,7 @@ export function PdfGenerator({
     const marginYPt = (paper.hPt - gridHPt) / 2;
 
     const startIdx = (currentPage - 1) * 9;
-    const pageItems = flattenedCards.slice(startIdx, startIdx + 9);
+    const pageItems = slotList.slice(startIdx, startIdx + 9);
 
     // 3. Draw cards or empty slot placeholders
     for (let slot = 0; slot < 9; slot++) {
@@ -164,8 +286,8 @@ export function PdfGenerator({
       const destW = Math.round(cardWPt * renderScale);
       const destH = Math.round(cardHPt * renderScale);
 
-      if (slot < pageItems.length) {
-        const item = pageItems[slot];
+      const item = pageItems[slot];
+      if (item) {
         try {
           ctx.drawImage(item.renderedCanvas, destX, destY, destW, destH);
         } catch {
@@ -239,7 +361,7 @@ export function PdfGenerator({
   }, [
     paperSize,
     currentPage,
-    flattenedCards,
+    slotList,
     cardStandard,
     guideWidthMm,
     guideColor,
@@ -247,11 +369,11 @@ export function PdfGenerator({
     extendGuidesToEdge
   ]);
 
-  // Export full print-ready PDF
+  // Export full print-ready PDF preserving exact slot positions (including empty slots)
   const handleDownloadPdf = async () => {
     if (pdfCards.length === 0) return;
     setIsGeneratingPdf(true);
-    setPdfProgress({ current: 0, total: flattenedCards.length });
+    setPdfProgress({ current: 0, total: totalCards });
 
     try {
       const config: PdfSheetConfig = {
@@ -264,12 +386,12 @@ export function PdfGenerator({
         extendGuidesToEdge
       };
 
-      const pdfInputs = pdfCards.map((c) => ({
-        id: c.id,
-        fileName: c.fileName,
-        canvas: c.renderedCanvas,
-        quantity: c.quantity,
-        adjustments: c.adjustments
+      const pdfInputs = slotList.map((slotItem, sIdx) => ({
+        id: slotItem ? `${slotItem.id}_slot_${sIdx}` : `empty_slot_${sIdx}`,
+        fileName: slotItem ? slotItem.fileName : 'empty',
+        canvas: slotItem ? slotItem.renderedCanvas : null,
+        quantity: 1,
+        adjustments: slotItem?.adjustments
       }));
 
       const pdfBlob = await createProxyPrintPdf({
@@ -432,7 +554,7 @@ export function PdfGenerator({
                   </span>
                 </h3>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Set quantities or add playsets (4x) of each card.
+                  Drag cards or use arrows to change order; set quantities or playsets (4x).
                 </p>
               </div>
 
@@ -494,90 +616,199 @@ export function PdfGenerator({
               </div>
             ) : (
               <div className="space-y-2 max-h-[380px] overflow-y-auto pr-1">
-                {pdfCards.map((item) => (
-                  <div
-                    key={item.id}
-                    className="bg-slate-950/80 border border-slate-800 rounded-xl p-2.5 flex items-center justify-between gap-3 hover:border-slate-700 transition"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <img
-                        src={item.thumbUrl}
-                        alt={item.fileName}
-                        className="w-10 h-14 object-cover rounded border border-slate-800 shrink-0"
-                      />
-                      <div className="min-w-0">
-                        <div
-                          className="text-xs font-bold text-slate-100 truncate"
-                          title={item.fileName}
-                        >
-                          {item.fileName}
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-mono">
-                          {item.renderedCanvas.width}×{item.renderedCanvas.height}px
-                          {item.adjustments.shadowLift > 0 ? ` • Lift +${item.adjustments.shadowLift}` : ''}
-                        </div>
-                        <div className="mt-1 flex items-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleSetPlayset(item.id, 1)}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold transition cursor-pointer ${
-                              item.quantity === 1
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
-                            }`}
+                {pdfCards.map((item, idx) => {
+                  const isDragging = draggedIdx === idx;
+                  const isDragOver = dragOverIdx === idx && draggedIdx !== idx;
+                  const assignedSlots = itemSlotsMap.get(item.id) || [idx];
+                  const primaryGlobalSlot = assignedSlots[0] ?? 0;
+                  const cardPage = Math.floor(primaryGlobalSlot / 9) + 1;
+                  const slotOnPage = (primaryGlobalSlot % 9) + 1;
+                  const slotLabels = [
+                    '1 (Top-L)',
+                    '2 (Top-M)',
+                    '3 (Top-R)',
+                    '4 (Mid-L)',
+                    '5 (Center)',
+                    '6 (Mid-R)',
+                    '7 (Bot-L)',
+                    '8 (Bot-M)',
+                    '9 (Bot-R)'
+                  ];
+
+                  return (
+                    <div
+                      key={item.id}
+                      draggable
+                      onDragStart={(e) => {
+                        setDraggedIdx(idx);
+                        setSheetDragSlot(primaryGlobalSlot - (currentPage - 1) * 9);
+                        e.dataTransfer.effectAllowed = 'move';
+                      }}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.dataTransfer.dropEffect = 'move';
+                        if (dragOverIdx !== idx) setDragOverIdx(idx);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        if (draggedIdx !== null && draggedIdx !== idx) {
+                          handleReorderQueue(draggedIdx, idx);
+                        }
+                        setDraggedIdx(null);
+                        setDragOverIdx(null);
+                        setSheetDragSlot(null);
+                      }}
+                      onDragEnd={() => {
+                        setDraggedIdx(null);
+                        setDragOverIdx(null);
+                        setSheetDragSlot(null);
+                      }}
+                      className={`bg-slate-950/80 border rounded-xl p-2.5 flex items-center justify-between gap-2.5 transition ${
+                        isDragging
+                          ? 'opacity-50 border-indigo-500/60 bg-indigo-950/20'
+                          : isDragOver
+                          ? 'border-indigo-400 bg-indigo-500/10 shadow-md'
+                          : 'border-slate-800 hover:border-slate-700'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0">
+                        {/* Drag Handle & Up/Down Slot Stepper Buttons */}
+                        <div className="flex items-center gap-1 shrink-0">
+                          <div
+                            className="text-slate-500 hover:text-slate-300 cursor-grab active:cursor-grabbing p-0.5"
+                            title="Drag to reorder or drop onto any slot on the 3×3 sheet"
                           >
-                            1x
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleSetPlayset(item.id, 4)}
-                            className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold transition cursor-pointer ${
-                              item.quantity === 4
-                                ? 'bg-indigo-600 text-white'
-                                : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
-                            }`}
+                            <GripVertical className="w-4 h-4" />
+                          </div>
+                          <div className="flex flex-col gap-0.5">
+                            <button
+                              type="button"
+                              onClick={() => handleMoveCardSlot(item.id, -1)}
+                              disabled={primaryGlobalSlot === 0}
+                              className={`p-0.5 rounded border transition ${
+                                primaryGlobalSlot === 0
+                                  ? 'text-slate-700 border-slate-900 cursor-not-allowed'
+                                  : 'text-slate-400 hover:text-white bg-slate-900 border-slate-800 hover:border-slate-700 cursor-pointer'
+                              }`}
+                              title="Move to previous slot"
+                            >
+                              <ChevronUp className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleMoveCardSlot(item.id, 1)}
+                              className="p-0.5 rounded border text-slate-400 hover:text-white bg-slate-900 border-slate-800 hover:border-slate-700 cursor-pointer transition"
+                              title="Move to next slot (works even with 1 card)"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="relative shrink-0">
+                          <img
+                            src={item.thumbUrl}
+                            alt={item.fileName}
+                            className="w-10 h-14 object-cover rounded border border-slate-800"
+                          />
+                          <span className="absolute -top-1.5 -left-1.5 px-1 py-0.2 rounded bg-slate-900/95 border border-slate-700 text-[9px] font-mono font-bold text-indigo-300">
+                            S{slotOnPage}
+                          </span>
+                        </div>
+
+                        <div className="min-w-0">
+                          <div
+                            className="text-xs font-bold text-slate-100 truncate"
+                            title={item.fileName}
                           >
-                            4x (Playset)
-                          </button>
+                            {item.fileName}
+                          </div>
+                          <div className="text-[10px] text-slate-400 font-mono">
+                            {cardPage > 1 ? `Page ${cardPage} • ` : ''}Slot {slotOnPage} of 9
+                            {item.adjustments.shadowLift > 0 ? ` • Lift +${item.adjustments.shadowLift}` : ''}
+                          </div>
+                          <div className="mt-1 flex items-center gap-1 flex-wrap">
+                            {/* Direct Slot Position Selector (1..9) */}
+                            <select
+                              aria-label={`Slot position for ${item.fileName}`}
+                              value={slotOnPage}
+                              onChange={(e) => {
+                                const newSlotOnPage = Number(e.target.value);
+                                const newGlobalSlot = (cardPage - 1) * 9 + (newSlotOnPage - 1);
+                                handleSetCardGlobalSlot(primaryGlobalSlot, newGlobalSlot);
+                              }}
+                              className="px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold bg-slate-900 text-indigo-300 border border-indigo-500/40 hover:border-indigo-400 focus:outline-none cursor-pointer"
+                              title="Set exact slot position (1–9) on the 3×3 sheet"
+                            >
+                              {slotLabels.map((lbl, sIdx) => (
+                                <option key={sIdx + 1} value={sIdx + 1}>
+                                  Slot {lbl}
+                                </option>
+                              ))}
+                            </select>
+
+                            <button
+                              type="button"
+                              onClick={() => handleSetPlayset(item.id, 1)}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold transition cursor-pointer ${
+                                item.quantity === 1
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+                              }`}
+                            >
+                              1x
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleSetPlayset(item.id, 4)}
+                              className={`px-1.5 py-0.5 rounded text-[9px] font-mono font-semibold transition cursor-pointer ${
+                                item.quantity === 4
+                                  ? 'bg-indigo-600 text-white'
+                                  : 'bg-slate-900 text-slate-400 hover:text-slate-200 border border-slate-800'
+                              }`}
+                            >
+                              4x
+                            </button>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    {/* Quantity Stepper & Remove */}
-                    <div className="flex items-center gap-2 shrink-0">
-                      <div className="flex items-center bg-slate-900 rounded-lg border border-slate-800 p-0.5">
+                      {/* Quantity Stepper & Remove */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <div className="flex items-center bg-slate-900 rounded-lg border border-slate-800 p-0.5">
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQuantity(item.id, -1)}
+                            className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-white rounded transition cursor-pointer"
+                            title="Decrease quantity"
+                          >
+                            <Minus className="w-3 h-3" />
+                          </button>
+                          <span className="w-6 text-center text-xs font-mono font-bold text-slate-200">
+                            {item.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleUpdateQuantity(item.id, 1)}
+                            className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-white rounded transition cursor-pointer"
+                            title="Increase quantity"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
+
                         <button
                           type="button"
-                          onClick={() => handleUpdateQuantity(item.id, -1)}
-                          className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-white rounded transition cursor-pointer"
-                          title="Decrease quantity"
+                          onClick={() => handleRemoveCard(item.id)}
+                          className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer transition"
+                          title="Remove from sheet"
                         >
-                          <Minus className="w-3 h-3" />
-                        </button>
-                        <span className="w-6 text-center text-xs font-mono font-bold text-slate-200">
-                          {item.quantity}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleUpdateQuantity(item.id, 1)}
-                          className="w-6 h-6 flex items-center justify-center text-slate-400 hover:text-white rounded transition cursor-pointer"
-                          title="Increase quantity"
-                        >
-                          <Plus className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
-
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveCard(item.id)}
-                        className="text-slate-500 hover:text-rose-400 p-1 cursor-pointer transition"
-                        title="Remove from sheet"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -750,6 +981,88 @@ export function PdfGenerator({
                 ref={previewCanvasRef}
                 className="w-full h-full object-contain block rounded-[2px]"
               />
+
+              {/* Interactive 3x3 Slot Drag-and-Drop Overlay on the Sheet (allows dropping onto ANY slot 1..9, occupied or empty) */}
+              {totalCards > 0 && (() => {
+                const cardWPt = (cardStandard.widthMm || 63.0) * MM_TO_PT;
+                const cardHPt = (cardStandard.heightMm || 88.0) * MM_TO_PT;
+                const gridWPt = 3 * cardWPt;
+                const gridHPt = 3 * cardHPt;
+                const marginXPt = (paperInfo.wPt - gridWPt) / 2;
+                const marginYPt = (paperInfo.hPt - gridHPt) / 2;
+                const startIdx = (currentPage - 1) * 9;
+                const pageItems = slotList.slice(startIdx, startIdx + 9);
+
+                return (
+                  <div
+                    className="absolute grid grid-cols-3 grid-rows-3"
+                    style={{
+                      left: `${(marginXPt / paperInfo.wPt) * 100}%`,
+                      top: `${(marginYPt / paperInfo.hPt) * 100}%`,
+                      width: `${(gridWPt / paperInfo.wPt) * 100}%`,
+                      height: `${(gridHPt / paperInfo.hPt) * 100}%`
+                    }}
+                  >
+                    {Array.from({ length: 9 }).map((_, slot) => {
+                      const slotItem = pageItems[slot];
+                      const hasCard = Boolean(slotItem);
+                      const isDraggingSlot = sheetDragSlot === slot;
+                      const isHoverSlot =
+                        sheetHoverSlot === slot &&
+                        sheetDragSlot !== null &&
+                        sheetDragSlot !== slot;
+
+                      return (
+                        <div
+                          key={slot}
+                          draggable={hasCard}
+                          onDragStart={(e) => {
+                            if (!hasCard) return;
+                            setSheetDragSlot(slot);
+                            e.dataTransfer.effectAllowed = 'move';
+                          }}
+                          onDragOver={(e) => {
+                            if (sheetDragSlot === null) return;
+                            e.preventDefault();
+                            e.dataTransfer.dropEffect = 'move';
+                            if (sheetHoverSlot !== slot) setSheetHoverSlot(slot);
+                          }}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            if (sheetDragSlot !== null && sheetDragSlot !== slot) {
+                              handleReorderSheetSlot(sheetDragSlot, slot);
+                            }
+                            setSheetDragSlot(null);
+                            setSheetHoverSlot(null);
+                            setDraggedIdx(null);
+                            setDragOverIdx(null);
+                          }}
+                          onDragEnd={() => {
+                            setSheetDragSlot(null);
+                            setSheetHoverSlot(null);
+                          }}
+                          title={
+                            slotItem
+                              ? `Slot ${slot + 1}: ${slotItem.fileName} (Drag to any slot 1–9 on sheet)`
+                              : `Empty Slot ${slot + 1} (Drop any card here)`
+                          }
+                          className={`transition-all select-none ${
+                            hasCard ? 'cursor-grab active:cursor-grabbing' : ''
+                          } ${
+                            isDraggingSlot
+                              ? 'bg-indigo-500/25 ring-2 ring-indigo-400'
+                              : isHoverSlot
+                              ? 'bg-indigo-500/20 ring-2 ring-indigo-500 shadow-inner'
+                              : hasCard
+                              ? 'hover:ring-1 hover:ring-indigo-400/60'
+                              : ''
+                          }`}
+                        />
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>

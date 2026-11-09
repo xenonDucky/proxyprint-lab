@@ -170,6 +170,7 @@ export interface PdfCardItem {
   renderedCanvas: HTMLCanvasElement;
   thumbUrl: string;
   quantity: number;
+  slotIndex?: number;
   adjustments: AdjustmentParams;
   cardStandard: CardStandard;
   bleedMm: number;

@@ -418,12 +418,11 @@ export function computeSharpenForTargetDpi(
   targetDpi: number,
   region: 'art' | 'text'
 ): number {
-  const clampedTarget = Math.max(DPI_BENCHMARKS.min, Math.min(DPI_BENCHMARKS.max, targetDpi));
-  if (clampedTarget <= DPI_BENCHMARKS.min) {
+  const clampedDetected = Math.max(60, Math.min(DPI_BENCHMARKS.max, detectedOpticalPpi));
+  const clampedTarget = Math.max(clampedDetected, Math.min(DPI_BENCHMARKS.max, targetDpi));
+  if (clampedTarget <= clampedDetected || clampedTarget <= DPI_BENCHMARKS.min) {
     return 0;
   }
-
-  const clampedDetected = Math.max(60, Math.min(DPI_BENCHMARKS.max, detectedOpticalPpi));
 
   // Ideal 600 DPI base sharpening calculated from autodetected card DPI
   let ideal600Sharpen = 0;
@@ -459,14 +458,20 @@ export function computeSharpenForTargetDpi(
     }
   }
 
+  const startDpi = Math.max(DPI_BENCHMARKS.min, clampedDetected);
   if (clampedTarget <= DPI_BENCHMARKS.ideal) {
-    const t =
-      (clampedTarget - DPI_BENCHMARKS.min) / (DPI_BENCHMARKS.ideal - DPI_BENCHMARKS.min);
+    const span = Math.max(1, DPI_BENCHMARKS.ideal - startDpi);
+    const t = (clampedTarget - startDpi) / span;
     return Math.round(ideal600Sharpen * t);
   }
 
   // Between 600 DPI (ideal) and 1200 DPI (max)
   const maxCap = region === 'art' ? 80 : 55;
+  if (clampedDetected >= DPI_BENCHMARKS.ideal) {
+    const spanHigh = Math.max(1, DPI_BENCHMARKS.max - clampedDetected);
+    const tHigh = (clampedTarget - clampedDetected) / spanHigh;
+    return Math.min(maxCap, Math.round(maxCap * tHigh));
+  }
   const tHigh =
     (clampedTarget - DPI_BENCHMARKS.ideal) / (DPI_BENCHMARKS.max - DPI_BENCHMARKS.ideal);
   return Math.min(maxCap, Math.round(ideal600Sharpen + (maxCap - ideal600Sharpen) * tHigh));
@@ -840,6 +845,15 @@ export function optimizePrintAdjustments({
     );
   };
 
+  // Sharpening sliders remain at 0 in auto-optimization (matching the card's native sharpness)
+  // so users can easily distinguish which artworks genuinely have lower native resolution.
+  const recommendedSharpen = 0;
+  const recommendedTextSharpen = 0;
+  const recommendedArtTargetDpi =
+    artOpticalPpi !== undefined ? Math.round(artOpticalPpi) : DPI_BENCHMARKS.min;
+  const recommendedTextTargetDpi =
+    textOpticalPpi !== undefined ? Math.round(textOpticalPpi) : DPI_BENCHMARKS.min;
+
   // Bounds helper
   const clampParams = (p: AdjustmentParams): AdjustmentParams => ({
     shadowLift: Math.max(0, Math.min(75, Math.round(p.shadowLift))),
@@ -850,21 +864,14 @@ export function optimizePrintAdjustments({
     sharpen: Math.max(0, Math.min(80, Math.round(p.sharpen ?? 0))),
     textBoxSharpen: Math.max(0, Math.min(80, Math.round(p.textBoxSharpen ?? 0))),
     artTargetDpi: Math.max(
-      DPI_BENCHMARKS.min,
-      Math.min(DPI_BENCHMARKS.max, Math.round(p.artTargetDpi ?? DPI_BENCHMARKS.ideal))
+      0,
+      Math.min(DPI_BENCHMARKS.max, Math.round(p.artTargetDpi ?? recommendedArtTargetDpi))
     ),
     textTargetDpi: Math.max(
-      DPI_BENCHMARKS.min,
-      Math.min(DPI_BENCHMARKS.max, Math.round(p.textTargetDpi ?? DPI_BENCHMARKS.ideal))
+      0,
+      Math.min(DPI_BENCHMARKS.max, Math.round(p.textTargetDpi ?? recommendedTextTargetDpi))
     )
   });
-
-  // Sharpening sliders remain at 0 in auto-optimization so users can easily distinguish which
-  // artworks genuinely have lower native resolution and need higher-quality source images.
-  const recommendedSharpen = 0;
-  const recommendedTextSharpen = 0;
-  const recommendedArtTargetDpi = DPI_BENCHMARKS.min;
-  const recommendedTextTargetDpi = DPI_BENCHMARKS.min;
 
   // Histogram-informed warm start seeds (ensures global awareness across dark, neon, and washed-out art)
   const adaptiveLift = Math.max(
