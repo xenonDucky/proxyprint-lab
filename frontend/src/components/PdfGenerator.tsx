@@ -866,30 +866,51 @@ export function PdfGenerator({
 
             {/* Guide Color */}
             <div>
-              <label className="block text-[11px] font-semibold text-slate-300 mb-1.5">
-                Guide Line Color
-              </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <label className="text-[11px] font-semibold text-slate-300">
+                  Guide Line Color
+                </label>
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="color"
+                    aria-label="Custom guide line color"
+                    value={guideColor}
+                    onChange={(e) => setGuideColor(e.target.value)}
+                    className="w-5 h-5 rounded cursor-pointer bg-transparent border-0 p-0"
+                    title="Pick custom guide color"
+                  />
+                  <span className="text-[10px] font-mono text-indigo-300 uppercase">
+                    {guideColor}
+                  </span>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-1.5">
                 {[
-                  { label: 'Black', hex: '#000000', border: 'border-slate-800' },
-                  { label: 'Dark Gray', hex: '#333333', border: 'border-slate-700' },
-                  { label: 'Light Gray', hex: '#999999', border: 'border-slate-600' }
+                  { label: 'Black', hex: '#000000' },
+                  { label: 'Dark Gray', hex: '#475569' },
+                  { label: 'Light Gray', hex: '#94a3b8' },
+                  { label: 'White', hex: '#ffffff' },
+                  { label: 'Cyan', hex: '#06b6d4' },
+                  { label: 'Magenta', hex: '#ec4899' },
+                  { label: 'Red', hex: '#ef4444' },
+                  { label: 'Yellow', hex: '#eab308' },
+                  { label: 'Green', hex: '#22c55e' }
                 ].map((c) => (
                   <button
                     key={c.hex}
                     type="button"
                     onClick={() => setGuideColor(c.hex)}
-                    className={`py-1.5 px-2 rounded-lg text-xs font-semibold flex items-center justify-center gap-1.5 border transition cursor-pointer ${
-                      guideColor === c.hex
+                    className={`py-1.5 px-2 rounded-lg text-[11px] font-semibold flex items-center justify-center gap-1.5 border transition cursor-pointer ${
+                      guideColor.toLowerCase() === c.hex.toLowerCase()
                         ? 'bg-indigo-600/20 text-white border-indigo-500 shadow'
                         : 'bg-slate-950 text-slate-400 hover:text-slate-200 border-slate-800'
                     }`}
                   >
                     <span
-                      className="w-2.5 h-2.5 rounded-full border border-slate-500"
+                      className="w-2.5 h-2.5 rounded-full border border-slate-500 shrink-0"
                       style={{ backgroundColor: c.hex }}
                     />
-                    {c.label}
+                    <span className="truncate">{c.label}</span>
                   </button>
                 ))}
               </div>
